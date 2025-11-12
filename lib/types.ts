@@ -104,7 +104,7 @@ export interface ExecutionPlan {
   confidence: 20 | 50 | 80 | null;
   budget_usd: number;
   headcount_needed: HeadcountRole[]; // Legacy format - array of {role, count}
-  resource_ids: string[]; // New format - array of SharedResource IDs
+  resource_ids?: string[]; // New format - array of SharedResource IDs (optional for backwards compatibility)
   partner_dependencies: string | null;
   product_requirements: string | null;
   carrier_requirements: string | null;
