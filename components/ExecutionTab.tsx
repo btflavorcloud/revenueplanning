@@ -22,6 +22,8 @@ export default function ExecutionTab({
 
   // Local state for immediate UI updates
   const [localBudgets, setLocalBudgets] = useState<Record<string, number>>({});
+  const [localReach, setLocalReach] = useState<Record<string, number | null>>({});
+  const [localConfidence, setLocalConfidence] = useState<Record<string, number | null>>({});
   const [localTextFields, setLocalTextFields] = useState<Record<string, {
     partner_dependencies?: string;
     product_requirements?: string;
@@ -31,11 +33,15 @@ export default function ExecutionTab({
   // Initialize local state from props
   useEffect(() => {
     const budgets: Record<string, number> = {};
+    const reach: Record<string, number | null> = {};
+    const confidence: Record<string, number | null> = {};
     const textFields: Record<string, any> = {};
 
     stretchGtmGroups.forEach(gtm => {
       if (gtm.execution_plan) {
         budgets[gtm.id] = gtm.execution_plan.budget_usd;
+        reach[gtm.id] = gtm.execution_plan.reach;
+        confidence[gtm.id] = gtm.execution_plan.confidence;
         textFields[gtm.id] = {
           partner_dependencies: gtm.execution_plan.partner_dependencies || '',
           product_requirements: gtm.execution_plan.product_requirements || '',
@@ -45,6 +51,8 @@ export default function ExecutionTab({
     });
 
     setLocalBudgets(budgets);
+    setLocalReach(reach);
+    setLocalConfidence(confidence);
     setLocalTextFields(textFields);
   }, [stretchGtmGroups]);
 
@@ -152,10 +160,15 @@ export default function ExecutionTab({
     });
   });
 
-  // Sort GTM groups by priority score (highest first)
+  // Sort GTM groups by priority score (highest first) using local state
   const sortedGtmGroups = [...stretchGtmGroups].sort((a, b) => {
-    const scoreA = calculatePriorityScore(a.execution_plan?.reach || null, a.execution_plan?.confidence || null);
-    const scoreB = calculatePriorityScore(b.execution_plan?.reach || null, b.execution_plan?.confidence || null);
+    const reachA = localReach[a.id] ?? a.execution_plan?.reach;
+    const confidenceA = localConfidence[a.id] ?? a.execution_plan?.confidence;
+    const reachB = localReach[b.id] ?? b.execution_plan?.reach;
+    const confidenceB = localConfidence[b.id] ?? b.execution_plan?.confidence;
+
+    const scoreA = calculatePriorityScore(reachA || null, confidenceA || null);
+    const scoreB = calculatePriorityScore(reachB || null, confidenceB || null);
     return scoreB - scoreA;
   });
 
@@ -209,7 +222,9 @@ export default function ExecutionTab({
             };
 
             const impactARR = gtmGroupRevenueBreakdown[gtm.id]?.arr || 0;
-            const priorityScore = calculatePriorityScore(executionPlan.reach, executionPlan.confidence);
+            const currentReach = localReach[gtm.id] ?? executionPlan.reach;
+            const currentConfidence = localConfidence[gtm.id] ?? executionPlan.confidence;
+            const priorityScore = calculatePriorityScore(currentReach, currentConfidence);
             const isExpanded = expandedCards.has(gtm.id);
 
             return (
@@ -230,10 +245,12 @@ export default function ExecutionTab({
                         Reach (Customers)
                       </label>
                       <select
-                        value={executionPlan.reach || ''}
-                        onChange={(e) => onUpdateExecutionPlan(gtm.id, {
-                          reach: e.target.value ? parseInt(e.target.value) as 1 | 10 | 100 | 1000 : null
-                        })}
+                        value={currentReach || ''}
+                        onChange={(e) => {
+                          const value = e.target.value ? parseInt(e.target.value) as 1 | 10 | 100 | 1000 : null;
+                          setLocalReach(prev => ({ ...prev, [gtm.id]: value }));
+                          onUpdateExecutionPlan(gtm.id, { reach: value });
+                        }}
                         className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-semibold bg-white"
                       >
                         <option value="">Select...</option>
@@ -260,10 +277,12 @@ export default function ExecutionTab({
                         Confidence
                       </label>
                       <select
-                        value={executionPlan.confidence || ''}
-                        onChange={(e) => onUpdateExecutionPlan(gtm.id, {
-                          confidence: e.target.value ? parseInt(e.target.value) as 20 | 50 | 80 : null
-                        })}
+                        value={currentConfidence || ''}
+                        onChange={(e) => {
+                          const value = e.target.value ? parseInt(e.target.value) as 20 | 50 | 80 : null;
+                          setLocalConfidence(prev => ({ ...prev, [gtm.id]: value }));
+                          onUpdateExecutionPlan(gtm.id, { confidence: value });
+                        }}
                         className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-semibold bg-white"
                       >
                         <option value="">Select...</option>
