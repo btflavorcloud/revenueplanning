@@ -91,13 +91,20 @@ export interface HeadcountRole {
   count: number;
 }
 
+export interface SharedResource {
+  id: string;
+  name: string; // e.g., "Sarah - Event Manager", "GTM Engineer #1"
+  role: string; // e.g., "Event Manager", "GTM Engineer"
+}
+
 export interface ExecutionPlan {
   id: string;
   gtm_group_id: string;
   reach: 1 | 10 | 100 | 1000 | null;
   confidence: 20 | 50 | 80 | null;
   budget_usd: number;
-  headcount_needed: HeadcountRole[];
+  headcount_needed: HeadcountRole[]; // Legacy format - array of {role, count}
+  resource_ids: string[]; // New format - array of SharedResource IDs
   partner_dependencies: string | null;
   product_requirements: string | null;
   carrier_requirements: string | null;

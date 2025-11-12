@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { Plus, X, ChevronDown, ChevronRight } from 'lucide-react';
-import { GtmGroupWithSegments, ExecutionPlan, HeadcountRole } from '@/lib/types';
+import { GtmGroupWithSegments, ExecutionPlan, HeadcountRole, SharedResource } from '@/lib/types';
 import { debounce } from '@/lib/utils';
 
 interface ExecutionTabProps {
@@ -20,6 +20,10 @@ export default function ExecutionTab({
 }: ExecutionTabProps) {
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [sortBy, setSortBy] = useState<'priority' | 'roi'>('priority');
+
+  // Shared resource pool (global across all GTM motions)
+  const [sharedResources, setSharedResources] = useState<SharedResource[]>([]);
+  const [showNewResourceInput, setShowNewResourceInput] = useState<string | null>(null);
 
   // Local state for immediate UI updates
   const [localBudgets, setLocalBudgets] = useState<Record<string, number>>({});
@@ -146,6 +150,28 @@ export default function ExecutionTab({
     }
   };
 
+  const addNewResource = (gtmGroupId: string, name: string, role: string) => {
+    const newResource: SharedResource = {
+      id: `temp-${Date.now()}`,
+      name,
+      role,
+    };
+    setSharedResources(prev => [...prev, newResource]);
+
+    // Add this resource to the GTM motion
+    const currentResources = stretchGtmGroups.find(g => g.id === gtmGroupId)?.execution_plan?.resource_ids || [];
+    onUpdateExecutionPlan(gtmGroupId, { resource_ids: [...currentResources, newResource.id] });
+    setShowNewResourceInput(null);
+  };
+
+  const toggleResource = (gtmGroupId: string, resourceId: string) => {
+    const currentResources = stretchGtmGroups.find(g => g.id === gtmGroupId)?.execution_plan?.resource_ids || [];
+    const newResources = currentResources.includes(resourceId)
+      ? currentResources.filter(id => id !== resourceId)
+      : [...currentResources, resourceId];
+    onUpdateExecutionPlan(gtmGroupId, { resource_ids: newResources });
+  };
+
   const addHeadcountRole = (gtmGroupId: string, currentHeadcount: HeadcountRole[]) => {
     const newHeadcount = [...currentHeadcount, { role: 'Sales', count: 1 }];
     onUpdateExecutionPlan(gtmGroupId, { headcount_needed: newHeadcount });
@@ -177,11 +203,20 @@ export default function ExecutionTab({
     return sum + (gtm.execution_plan?.budget_usd || 0);
   }, 0);
 
-  const totalHeadcountByRole: Record<string, number> = {};
+  // Deduplicated headcount using shared resources
+  const uniqueResourceIds = new Set<string>();
   stretchGtmGroups.forEach(gtm => {
-    gtm.execution_plan?.headcount_needed?.forEach(hc => {
-      totalHeadcountByRole[hc.role] = (totalHeadcountByRole[hc.role] || 0) + hc.count;
+    gtm.execution_plan?.resource_ids?.forEach(resourceId => {
+      uniqueResourceIds.add(resourceId);
     });
+  });
+
+  const totalHeadcountByRole: Record<string, number> = {};
+  uniqueResourceIds.forEach(resourceId => {
+    const resource = sharedResources.find(r => r.id === resourceId);
+    if (resource) {
+      totalHeadcountByRole[resource.role] = (totalHeadcountByRole[resource.role] || 0) + 1;
+    }
   });
 
   // Sort GTM groups by priority score or ROI (highest first) using local state
@@ -404,46 +439,86 @@ export default function ExecutionTab({
 
                   {isExpanded && (
                     <div className="p-4 space-y-4 bg-gray-50">
-                      {/* Headcount */}
+                      {/* Shared Resources (Tag-based) */}
                       <div>
                         <label className="block text-sm font-semibold text-gray-700 mb-2">
                           Team Members Needed
                         </label>
-                        <div className="space-y-2">
-                          {executionPlan.headcount_needed?.map((hc, index) => (
-                            <div key={index} className="flex items-center gap-2">
-                              <select
-                                value={hc.role}
-                                onChange={(e) => updateHeadcountRole(gtm.id, executionPlan.headcount_needed, index, 'role', e.target.value)}
-                                className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white"
+
+                        {/* Selected Resources */}
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {executionPlan.resource_ids?.map(resourceId => {
+                            const resource = sharedResources.find(r => r.id === resourceId);
+                            if (!resource) return null;
+                            return (
+                              <div
+                                key={resourceId}
+                                className="flex items-center gap-2 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-semibold border border-blue-300"
                               >
-                                {ROLE_OPTIONS.map(role => (
-                                  <option key={role} value={role}>{role}</option>
+                                <span>{resource.name}</span>
+                                <button
+                                  onClick={() => toggleResource(gtm.id, resourceId)}
+                                  className="hover:text-blue-900"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Available Resources to Add */}
+                        {sharedResources.filter(r => !executionPlan.resource_ids?.includes(r.id)).length > 0 && (
+                          <div className="mb-3">
+                            <p className="text-xs text-gray-600 mb-2">Available resources:</p>
+                            <div className="flex flex-wrap gap-2">
+                              {sharedResources
+                                .filter(r => !executionPlan.resource_ids?.includes(r.id))
+                                .map(resource => (
+                                  <button
+                                    key={resource.id}
+                                    onClick={() => toggleResource(gtm.id, resource.id)}
+                                    className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm hover:bg-gray-200 border border-gray-300"
+                                  >
+                                    + {resource.name} ({resource.role})
+                                  </button>
                                 ))}
-                              </select>
-                              <input
-                                type="number"
-                                value={hc.count}
-                                onChange={(e) => updateHeadcountRole(gtm.id, executionPlan.headcount_needed, index, 'count', parseInt(e.target.value) || 1)}
-                                className="w-20 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white"
-                                min="1"
-                              />
-                              <button
-                                onClick={() => removeHeadcountRole(gtm.id, executionPlan.headcount_needed, index)}
-                                className="p-2 text-red-600 hover:bg-red-50 rounded"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
                             </div>
-                          ))}
+                          </div>
+                        )}
+
+                        {/* Add New Resource */}
+                        {showNewResourceInput === gtm.id ? (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              placeholder="Resource name (e.g., Sarah - Event Manager)"
+                              className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  const name = e.currentTarget.value;
+                                  const role = name.includes('-') ? name.split('-')[1].trim() : 'Other';
+                                  if (name) addNewResource(gtm.id, name, role);
+                                }
+                              }}
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => setShowNewResourceInput(null)}
+                              className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
                           <button
-                            onClick={() => addHeadcountRole(gtm.id, executionPlan.headcount_needed || [])}
+                            onClick={() => setShowNewResourceInput(gtm.id)}
                             className="flex items-center gap-2 px-3 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                           >
                             <Plus className="w-4 h-4" />
-                            Add Role
+                            Add New Resource
                           </button>
-                        </div>
+                        )}
                       </div>
 
                       {/* 3rd Party Dependencies */}
