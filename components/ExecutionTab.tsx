@@ -197,8 +197,8 @@ export default function ExecutionTab({
     const impactB = gtmGroupRevenueBreakdown[b.id]?.arr || 0;
 
     if (sortBy === 'roi') {
-      const roiA = calculateROIScore(impactA, confidenceA, budgetA);
-      const roiB = calculateROIScore(impactB, confidenceB, budgetB);
+      const roiA = calculateROIScore(impactA, confidenceA ?? null, budgetA);
+      const roiB = calculateROIScore(impactB, confidenceB ?? null, budgetB);
       return roiB - roiA;
     } else {
       const scoreA = calculatePriorityScore(reachA || null, confidenceA || null);
