@@ -282,7 +282,7 @@ export default function ExecutionTab({
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
                         <input
                           type="number"
-                          value={localBudgets[gtm.id] ?? executionPlan.budget_usd || ''}
+                          value={(localBudgets[gtm.id] ?? executionPlan.budget_usd) || ''}
                           onChange={(e) => handleBudgetChange(gtm.id, e.target.value)}
                           onBlur={() => handleBudgetBlur(gtm.id)}
                           className="w-full pl-6 pr-3 py-2 text-sm border border-gray-300 rounded-lg font-semibold bg-white"
@@ -360,7 +360,7 @@ export default function ExecutionTab({
                           3rd Party Dependencies
                         </label>
                         <textarea
-                          value={localTextFields[gtm.id]?.partner_dependencies ?? executionPlan.partner_dependencies || ''}
+                          value={(localTextFields[gtm.id]?.partner_dependencies ?? executionPlan.partner_dependencies) || ''}
                           onChange={(e) => handleTextFieldChange(gtm.id, 'partner_dependencies', e.target.value)}
                           onBlur={() => handleTextFieldBlur(gtm.id, 'partner_dependencies')}
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white"
@@ -375,7 +375,7 @@ export default function ExecutionTab({
                           Product Build Requirements
                         </label>
                         <textarea
-                          value={localTextFields[gtm.id]?.product_requirements ?? executionPlan.product_requirements || ''}
+                          value={(localTextFields[gtm.id]?.product_requirements ?? executionPlan.product_requirements) || ''}
                           onChange={(e) => handleTextFieldChange(gtm.id, 'product_requirements', e.target.value)}
                           onBlur={() => handleTextFieldBlur(gtm.id, 'product_requirements')}
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white"
@@ -390,7 +390,7 @@ export default function ExecutionTab({
                           Carrier Network Requirements
                         </label>
                         <textarea
-                          value={localTextFields[gtm.id]?.carrier_requirements ?? executionPlan.carrier_requirements || ''}
+                          value={(localTextFields[gtm.id]?.carrier_requirements ?? executionPlan.carrier_requirements) || ''}
                           onChange={(e) => handleTextFieldChange(gtm.id, 'carrier_requirements', e.target.value)}
                           onBlur={() => handleTextFieldBlur(gtm.id, 'carrier_requirements')}
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white"
