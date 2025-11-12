@@ -1,0 +1,473 @@
+'use client';
+
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import {
+  Target, TrendingUp, Plus, Download, DollarSign, Zap,
+  ChevronDown, ChevronRight, X, Save, Loader2
+} from 'lucide-react';
+import { useScenarios } from '@/lib/hooks/useScenarios';
+import { calculateMetrics, calculateFunnelMetrics, debounce } from '@/lib/utils';
+import {
+  ScenarioWithData, MONTHS, SEGMENT_CONFIGS, SegmentType, GtmType, PlanWithGtmGroups
+} from '@/lib/types';
+
+interface RevenuePlannerProps {
+  scenarioId: string;
+  userId: string;
+}
+
+export default function RevenuePlanner({ scenarioId, userId }: RevenuePlannerProps) {
+  const [activeTab, setActiveTab] = useState<'output' | 'funnel'>('output');
+  const [conversionRates, setConversionRates] = useState({
+    SMB: { oppToClose: 25, avgDaysToClose: 60 },
+    MM: { oppToClose: 20, avgDaysToClose: 90 },
+    ENT: { oppToClose: 20, avgDaysToClose: 120 },
+    'ENT+': { oppToClose: 10, avgDaysToClose: 180 },
+    Flagship: { oppToClose: 10, avgDaysToClose: 180 },
+  });
+
+  const { scenarios, loading, error, saving, updateScenario, addGtmGroup, updateGtmGroup,
+    deleteGtmGroup, addSegment, updateSegment, deleteSegment } = useScenarios(userId);
+
+  const scenario = scenarios.find(s => s.id === scenarioId);
+  const [localRps, setLocalRps] = useState(scenario?.rps || 40);
+  const [localTargetShipments, setLocalTargetShipments] = useState(scenario?.target_shipments || 400000);
+
+  useEffect(() => {
+    if (scenario) {
+      setLocalRps(scenario.rps);
+      setLocalTargetShipments(scenario.target_shipments);
+    }
+  }, [scenario]);
+
+  // Debounced save
+  const debouncedUpdateScenario = useCallback(
+    debounce((id: string, updates: any) => {
+      updateScenario(id, updates);
+    }, 500),
+    [updateScenario]
+  );
+
+  const handleRpsChange = (value: number) => {
+    setLocalRps(value);
+    if (scenario) {
+      debouncedUpdateScenario(scenario.id, { rps: value });
+    }
+  };
+
+  const handleTargetShipmentsChange = (value: number) => {
+    setLocalTargetShipments(value);
+    if (scenario) {
+      debouncedUpdateScenario(scenario.id, { target_shipments: value });
+    }
+  };
+
+  const debouncedUpdateSegment = useCallback(
+    debounce((segmentId: string, updates: any) => {
+      updateSegment(segmentId, updates);
+    }, 500),
+    [updateSegment]
+  );
+
+  const handleSegmentLaunchChange = (segmentId: string, launches: number[], monthIndex: number, value: string) => {
+    const newLaunches = launches.map((v, i) => i === monthIndex ? parseInt(value) || 0 : v);
+    debouncedUpdateSegment(segmentId, { launches: newLaunches });
+  };
+
+  const handleSegmentSpmChange = (segmentId: string, value: string) => {
+    debouncedUpdateSegment(segmentId, { spm: parseInt(value) || 0 });
+  };
+
+  const calculations = useMemo(() => {
+    if (!scenario) return null;
+    return calculateMetrics(scenario, localRps, localTargetShipments, conversionRates);
+  }, [scenario, localRps, localTargetShipments, conversionRates]);
+
+  const funnelCalculations = useMemo(() => {
+    if (!scenario) return null;
+    return calculateFunnelMetrics(scenario, conversionRates);
+  }, [scenario, conversionRates]);
+
+  const exportToCSV = () => {
+    if (!scenario || !calculations) return;
+
+    const rows = [];
+    rows.push(['Plan', 'GTM Motion', 'Segment', 'SPM', ...MONTHS, 'Total Shipments', 'Realized Revenue', 'ARR']);
+
+    scenario.plans.forEach(plan => {
+      plan.gtm_groups.forEach(gtmGroup => {
+        gtmGroup.segments.forEach((seg, idx) => {
+          rows.push([
+            idx === 0 ? `${scenario.name} - ${plan.type}` : '',
+            idx === 0 ? gtmGroup.name : '',
+            seg.segment_type,
+            seg.spm,
+            ...seg.launches,
+            calculations.segmentTotals[seg.id],
+            `$${calculations.segmentRevenueBreakdown[seg.id]?.realized.toLocaleString()}`,
+            `$${calculations.segmentRevenueBreakdown[seg.id]?.arr.toLocaleString()}`
+          ]);
+        });
+      });
+    });
+
+    const csvContent = rows.map(row => row.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `gtm-revenue-plan-${scenario.name}-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 text-blue-600 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Loading scenario...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <p className="text-red-600 mb-4">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!scenario) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <p className="text-gray-600">Scenario not found</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!calculations || !funnelCalculations) return null;
+
+  const baselinePlan = scenario.plans.find(p => p.type === 'Baseline');
+  const stretchPlan = scenario.plans.find(p => p.type === 'Stretch');
+
+  const renderPlan = (plan: PlanWithGtmGroups | undefined, planType: 'Baseline' | 'Stretch') => {
+    if (!plan) return null;
+
+    const planColors = planType === 'Baseline'
+      ? { bg: 'bg-gray-50', border: 'border-gray-400', text: 'text-gray-900', headerBg: 'bg-gray-200' }
+      : { bg: 'bg-orange-50', border: 'border-orange-400', text: 'text-orange-900', headerBg: 'bg-orange-100' };
+
+    return (
+      <div className="flex-1">
+        <div className={`${planColors.headerBg} p-4 border-b-2 ${planColors.border} sticky top-0 z-10`}>
+          <h3 className="text-xl font-bold text-gray-900">{planType} Plan</h3>
+          <div className="grid grid-cols-2 gap-3 mt-3">
+            <div className="bg-white bg-opacity-50 rounded p-2">
+              <p className="text-xs text-gray-600">Shipments</p>
+              <p className="text-lg font-bold text-gray-900">
+                {calculations.masterGroupTotals[plan.id]?.toLocaleString() || '0'}
+              </p>
+            </div>
+            <div className="bg-white bg-opacity-50 rounded p-2">
+              <p className="text-xs text-gray-600">Revenue</p>
+              <p className="text-lg font-bold text-gray-900">
+                ${(calculations.masterGroupRevenueBreakdown[plan.id]?.realized || 0).toLocaleString()}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {plan.gtm_groups.map(gtmGroup => {
+            const gtmFunnel = funnelCalculations.gtmGroupFunnelData[gtmGroup.id];
+
+            return (
+              <div key={gtmGroup.id} className="bg-white rounded-lg shadow border-2 border-gray-300">
+                {/* GTM Group Header */}
+                <div className="bg-gray-100 p-3 flex items-center justify-between border-b-2 border-gray-300">
+                  <div className="flex items-center gap-2 flex-1">
+                    <button
+                      onClick={() => updateGtmGroup(gtmGroup.id, { collapsed: !gtmGroup.collapsed })}
+                      className="text-gray-700 hover:text-gray-900"
+                    >
+                      {gtmGroup.collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </button>
+                    <input
+                      type="text"
+                      value={gtmGroup.name}
+                      onChange={(e) => updateGtmGroup(gtmGroup.id, { name: e.target.value })}
+                      className="text-sm font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-blue-700 rounded px-2 py-1 flex-1"
+                    />
+                    <select
+                      value={gtmGroup.type}
+                      onChange={(e) => updateGtmGroup(gtmGroup.id, { type: e.target.value as GtmType })}
+                      className="text-xs font-semibold text-gray-700 bg-white border border-gray-400 rounded px-2 py-1"
+                    >
+                      <option value="Sales">Sales</option>
+                      <option value="Marketing">Marketing</option>
+                      <option value="Partnerships">Partnerships</option>
+                      <option value="Custom">Custom</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right text-xs">
+                      <p className="text-gray-600">Shipments</p>
+                      <p className="font-bold text-gray-900">
+                        {calculations.gtmGroupTotals[gtmGroup.id]?.toLocaleString() || '0'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => deleteGtmGroup(gtmGroup.id)}
+                      className="p-1 text-red-600 hover:bg-red-50 rounded"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Segments */}
+                {!gtmGroup.collapsed && (
+                  <div className="p-3">
+                    {gtmGroup.segments.map((segment) => {
+                      const segmentFunnel = funnelCalculations.segmentFunnelData[segment.id];
+
+                      return (
+                        <div key={segment.id} className="mb-3 last:mb-0">
+                          <div className="flex items-center gap-2 mb-2 text-xs">
+                            <div className="px-2 py-1 bg-gray-200 text-gray-700 rounded font-semibold border border-gray-400">
+                              {segment.segment_type}
+                            </div>
+                            <span className="text-gray-600">SPM:</span>
+                            <input
+                              type="number"
+                              value={segment.spm}
+                              onChange={(e) => handleSegmentSpmChange(segment.id, e.target.value)}
+                              className="w-20 px-2 py-1 text-xs border border-gray-300 rounded"
+                              min="0"
+                            />
+                            {activeTab === 'output' ? (
+                              <>
+                                <span className="text-gray-600">
+                                  Total: <span className="font-bold text-gray-900">
+                                    {calculations.segmentTotals[segment.id]?.toLocaleString() || '0'}
+                                  </span>
+                                </span>
+                                <span className="text-gray-600">
+                                  Rev: <span className="font-bold text-gray-900">
+                                    ${(calculations.segmentRevenueBreakdown[segment.id]?.realized || 0).toLocaleString()}
+                                  </span>
+                                </span>
+                                <span className="text-gray-600">
+                                  ARR: <span className="font-bold text-gray-900">
+                                    ${(calculations.segmentRevenueBreakdown[segment.id]?.arr || 0).toLocaleString()}
+                                  </span>
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-gray-600">
+                                Opps: <span className="font-bold text-gray-900">
+                                  {segmentFunnel?.totalOpps?.toLocaleString() || '0'}
+                                </span>
+                              </span>
+                            )}
+                            <button
+                              onClick={() => deleteSegment(segment.id)}
+                              className="ml-auto p-1 text-red-600 hover:bg-red-50 rounded"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+
+                          {/* Monthly Grid - Compact */}
+                          <div className="grid grid-cols-12 gap-1">
+                            {MONTHS.map((month, monthIndex) => (
+                              <div key={monthIndex}>
+                                <label className="block text-[10px] text-gray-600 text-center mb-1">
+                                  {month}
+                                </label>
+                                <input
+                                  type="number"
+                                  value={segment.launches[monthIndex]}
+                                  onChange={(e) => handleSegmentLaunchChange(segment.id, segment.launches, monthIndex, e.target.value)}
+                                  className="w-full px-1 py-1 text-xs text-center border border-gray-300 rounded"
+                                  min="0"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Add Segment */}
+                    <div className="flex gap-1 mt-3 pt-3 border-t border-gray-200 flex-wrap">
+                      <span className="text-xs text-gray-600 font-semibold">Add:</span>
+                      {Object.entries(SEGMENT_CONFIGS).map(([type, config]) => (
+                        <button
+                          key={type}
+                          onClick={() => addSegment(gtmGroup.id, type as SegmentType, config.defaultSPM)}
+                          className="px-2 py-1 bg-gray-200 text-gray-700 border border-gray-400 rounded text-xs font-semibold hover:bg-gray-300"
+                        >
+                          + {config.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Add GTM Group */}
+          <button
+            onClick={() => addGtmGroup(plan.id, 'New GTM Motion', 'Custom')}
+            className="w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-blue-600 hover:text-blue-600 transition-colors flex items-center justify-center gap-2 text-sm font-semibold"
+          >
+            <Plus className="w-4 h-4" />
+            Add GTM Motion
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 text-blue-600 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!scenario) return null;
+
+  return (
+    <div className="flex-1 bg-gray-50 overflow-hidden flex flex-col">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-300 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">{scenario.name}</h1>
+            <div className="flex items-center gap-4 mt-2">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-semibold text-gray-700">Target:</label>
+                <input
+                  type="number"
+                  value={localTargetShipments}
+                  onChange={(e) => handleTargetShipmentsChange(parseInt(e.target.value) || 0)}
+                  className="w-32 px-2 py-1 text-sm border border-gray-300 rounded font-semibold"
+                  min="0"
+                />
+                <span className="text-sm text-gray-600">shipments</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-semibold text-gray-700">RPS:</label>
+                <div className="relative">
+                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+                  <input
+                    type="number"
+                    value={localRps}
+                    onChange={(e) => handleRpsChange(parseFloat(e.target.value) || 0)}
+                    className="w-20 pl-5 pr-2 py-1 text-sm border border-gray-300 rounded font-semibold"
+                    min="0"
+                    step="0.01"
+                  />
+                </div>
+              </div>
+              {saving && (
+                <div className="flex items-center gap-2 text-sm text-blue-600">
+                  <Save className="w-4 h-4 animate-pulse" />
+                  <span>Saving...</span>
+                </div>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={exportToCSV}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition-colors text-sm"
+          >
+            <Download className="w-4 h-4" />
+            Export CSV
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => setActiveTab('output')}
+            className={`px-6 py-2 rounded-lg font-semibold transition-colors ${
+              activeTab === 'output'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Target className="w-4 h-4" />
+              <span>Output View</span>
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('funnel')}
+            className={`px-6 py-2 rounded-lg font-semibold transition-colors ${
+              activeTab === 'funnel'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4" />
+              <span>Funnel Planning</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      {/* Summary Metrics */}
+      <div className="bg-white border-b border-gray-300 p-4">
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-gray-50 rounded-lg p-3 border-4 border-blue-700">
+            <p className="text-xs font-semibold text-gray-600 mb-1">Total Annual Shipments</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {calculations.totalShipments.toLocaleString()}
+            </p>
+            <p className="text-xs text-gray-600 mt-1">
+              {calculations.percentageToGoal.toFixed(1)}% of {localTargetShipments.toLocaleString()} goal
+            </p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3 border-4 border-blue-700">
+            <p className="text-xs font-semibold text-gray-600 mb-1">Realized Revenue (Year 1)</p>
+            <p className="text-2xl font-bold text-gray-900">
+              ${calculations.realizedRevenue.toLocaleString()}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">Actual revenue this year</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3 border-4 border-blue-700">
+            <p className="text-xs font-semibold text-gray-600 mb-1">Annualized Run Rate (ARR)</p>
+            <p className="text-2xl font-bold text-gray-900">
+              ${calculations.annualizedRunRate.toLocaleString()}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">Full-year potential</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Baseline & Stretch Plans Side-by-Side */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="grid grid-cols-2 divide-x divide-gray-300 h-full">
+          {renderPlan(baselinePlan, 'Baseline')}
+          {renderPlan(stretchPlan, 'Stretch')}
+        </div>
+      </div>
+    </div>
+  );
+}
