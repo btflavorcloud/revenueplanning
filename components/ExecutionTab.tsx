@@ -317,6 +317,7 @@ export default function ExecutionTab({
               confidence: null,
               budget_usd: 0,
               headcount_needed: [],
+              resource_ids: [],
               partner_dependencies: null,
               product_requirements: null,
               carrier_requirements: null,
