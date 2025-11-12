@@ -19,6 +19,7 @@ export default function ExecutionTab({
   onUpdateExecutionPlan
 }: ExecutionTabProps) {
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [sortBy, setSortBy] = useState<'priority' | 'roi'>('priority');
 
   // Local state for immediate UI updates
   const [localBudgets, setLocalBudgets] = useState<Record<string, number>>({});
@@ -73,6 +74,15 @@ export default function ExecutionTab({
     return (reach * confidence) / 10;
   };
 
+  const calculateROIScore = (
+    impact: number,
+    confidence: number | null,
+    budget: number
+  ): number => {
+    if (!confidence || budget === 0) return 0;
+    return (impact * (confidence / 100)) / budget;
+  };
+
   const getPriorityBadgeColor = (score: number): string => {
     if (score >= 500) return 'bg-green-500 text-white';
     if (score >= 100) return 'bg-yellow-500 text-gray-900';
@@ -84,6 +94,20 @@ export default function ExecutionTab({
     if (score >= 100) return 'Medium Priority';
     if (score > 0) return 'Low Priority';
     return 'Not Scored';
+  };
+
+  const getROIBadgeColor = (score: number): string => {
+    if (score >= 10) return 'bg-blue-500 text-white';
+    if (score >= 5) return 'bg-cyan-500 text-gray-900';
+    if (score > 0) return 'bg-slate-400 text-gray-900';
+    return 'bg-gray-300 text-gray-600';
+  };
+
+  const getROILabel = (score: number): string => {
+    if (score >= 10) return `${score.toFixed(1)}x ROI`;
+    if (score >= 5) return `${score.toFixed(1)}x ROI`;
+    if (score > 0) return `${score.toFixed(1)}x ROI`;
+    return 'No Budget';
   };
 
   const handleBudgetChange = (gtmGroupId: string, value: string) => {
@@ -160,20 +184,62 @@ export default function ExecutionTab({
     });
   });
 
-  // Sort GTM groups by priority score (highest first) using local state
+  // Sort GTM groups by priority score or ROI (highest first) using local state
   const sortedGtmGroups = [...stretchGtmGroups].sort((a, b) => {
     const reachA = localReach[a.id] ?? a.execution_plan?.reach;
     const confidenceA = localConfidence[a.id] ?? a.execution_plan?.confidence;
+    const budgetA = localBudgets[a.id] ?? a.execution_plan?.budget_usd ?? 0;
+    const impactA = gtmGroupRevenueBreakdown[a.id]?.arr || 0;
+
     const reachB = localReach[b.id] ?? b.execution_plan?.reach;
     const confidenceB = localConfidence[b.id] ?? b.execution_plan?.confidence;
+    const budgetB = localBudgets[b.id] ?? b.execution_plan?.budget_usd ?? 0;
+    const impactB = gtmGroupRevenueBreakdown[b.id]?.arr || 0;
 
-    const scoreA = calculatePriorityScore(reachA || null, confidenceA || null);
-    const scoreB = calculatePriorityScore(reachB || null, confidenceB || null);
-    return scoreB - scoreA;
+    if (sortBy === 'roi') {
+      const roiA = calculateROIScore(impactA, confidenceA, budgetA);
+      const roiB = calculateROIScore(impactB, confidenceB, budgetB);
+      return roiB - roiA;
+    } else {
+      const scoreA = calculatePriorityScore(reachA || null, confidenceA || null);
+      const scoreB = calculatePriorityScore(reachB || null, confidenceB || null);
+      return scoreB - scoreA;
+    }
   });
 
   return (
     <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
+      {/* Sort Toggle */}
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Stretch GTM Motions</h2>
+          <p className="text-sm text-gray-600">Evaluate and prioritize strategic growth initiatives</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-gray-700">Sort by:</span>
+          <button
+            onClick={() => setSortBy('priority')}
+            className={`px-4 py-2 rounded-lg font-semibold text-sm transition-colors ${
+              sortBy === 'priority'
+                ? 'bg-green-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            Priority Score
+          </button>
+          <button
+            onClick={() => setSortBy('roi')}
+            className={`px-4 py-2 rounded-lg font-semibold text-sm transition-colors ${
+              sortBy === 'roi'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            ROI Score
+          </button>
+        </div>
+      </div>
+
       {/* Total Resources Summary */}
       <div className="bg-white rounded-lg shadow-md p-6 mb-6 border-2 border-blue-500">
         <h3 className="text-lg font-bold text-gray-900 mb-4">Total Resource Requirements</h3>
@@ -224,7 +290,9 @@ export default function ExecutionTab({
             const impactARR = gtmGroupRevenueBreakdown[gtm.id]?.arr || 0;
             const currentReach = localReach[gtm.id] ?? executionPlan.reach;
             const currentConfidence = localConfidence[gtm.id] ?? executionPlan.confidence;
+            const currentBudget = localBudgets[gtm.id] ?? executionPlan.budget_usd;
             const priorityScore = calculatePriorityScore(currentReach, currentConfidence);
+            const roiScore = calculateROIScore(impactARR, currentConfidence, currentBudget);
             const isExpanded = expandedCards.has(gtm.id);
 
             return (
@@ -233,8 +301,13 @@ export default function ExecutionTab({
                 <div className="p-4 bg-orange-50 border-b-2 border-orange-200">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-xl font-bold text-gray-900">{gtm.name}</h3>
-                    <div className={`px-4 py-2 rounded-full font-bold text-sm ${getPriorityBadgeColor(priorityScore)}`}>
-                      {getPriorityLabel(priorityScore)} ({priorityScore})
+                    <div className="flex items-center gap-2">
+                      <div className={`px-4 py-2 rounded-full font-bold text-sm ${getPriorityBadgeColor(priorityScore)}`}>
+                        {getPriorityLabel(priorityScore)} ({priorityScore})
+                      </div>
+                      <div className={`px-4 py-2 rounded-full font-bold text-sm ${getROIBadgeColor(roiScore)}`}>
+                        {getROILabel(roiScore)}
+                      </div>
                     </div>
                   </div>
 
