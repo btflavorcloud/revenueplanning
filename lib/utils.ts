@@ -36,9 +36,19 @@ export function calculateMetrics(
         segment.launches.forEach((launchCount, monthIndex) => {
           if (launchCount > 0) {
             const monthsRemaining = 12 - monthIndex;
-            const shipmentsFromThisLaunch = launchCount * segment.spm * monthsRemaining;
+
+            // Peak season adjustment: 40% increase for November (index 10) and December (index 11)
+            const peakSeasonMultiplier = 1.4;
+            const peakSeasonMonths = monthIndex <= 10 ? 2 : 1; // Both Nov & Dec, or just Dec
+            const regularMonths = monthsRemaining - peakSeasonMonths;
+
+            // Calculate shipments with peak season boost
+            const shipmentsFromThisLaunch = (regularMonths * launchCount * segment.spm) +
+                                            (peakSeasonMonths * launchCount * segment.spm * peakSeasonMultiplier);
             const revenueFromThisLaunch = shipmentsFromThisLaunch * rps;
-            const annualizedFromThisLaunch = launchCount * segment.spm * 12 * rps;
+
+            // ARR: 10 regular months + 2 peak season months at 1.4x = 12.8 effective months
+            const annualizedFromThisLaunch = launchCount * segment.spm * rps * (10 + 2 * peakSeasonMultiplier);
 
             totalShipments += shipmentsFromThisLaunch;
             segmentShipments += shipmentsFromThisLaunch;
@@ -55,8 +65,11 @@ export function calculateMetrics(
             gtmGroupARR += annualizedFromThisLaunch;
             planARR += annualizedFromThisLaunch;
 
+            // Apply peak season multiplier to monthly shipments
             for (let m = monthIndex; m < 12; m++) {
-              monthlyShipments[m] += launchCount * segment.spm;
+              const isPeakSeason = (m === 10 || m === 11); // November and December
+              const multiplier = isPeakSeason ? peakSeasonMultiplier : 1.0;
+              monthlyShipments[m] += launchCount * segment.spm * multiplier;
             }
           }
         });
