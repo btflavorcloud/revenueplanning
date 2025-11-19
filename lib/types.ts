@@ -46,6 +46,7 @@ export interface Scenario {
   collapsed: boolean;
   created_at: string;
   updated_at: string;
+  settings: ScenarioSettings | null;
 }
 
 export interface Plan {
@@ -117,6 +118,7 @@ export interface ScenarioWithData extends Scenario {
   plans: PlanWithGtmGroups[];
   // Keep for backwards compatibility during migration
   gtm_groups?: GtmGroupWithSegments[];
+  settings: ScenarioSettings;
 }
 
 export interface PlanWithGtmGroups extends Plan {
@@ -132,6 +134,100 @@ export interface GtmGroupWithSegments extends GtmGroup {
 export type SegmentType = 'SMB' | 'MM' | 'ENT' | 'ENT+' | 'Flagship';
 export type GtmType = 'Sales' | 'Marketing' | 'Partnerships' | 'Custom';
 export type ScenarioType = 'Baseline' | 'Stretch' | 'Custom';
+export type QuarterKey = keyof typeof QUARTERS;
+
+export type QuarterBreakdown = Record<QuarterKey, number>;
+
+export interface SegmentSeasonality {
+  november: number;
+  december: number;
+}
+
+export type SeasonalitySettings = Record<SegmentType, SegmentSeasonality>;
+
+export type IntegrationTimelineSettings = Record<SegmentType, number>;
+
+export interface ScenarioSettings {
+  seasonality: SeasonalitySettings;
+  integrationTimelineDays: IntegrationTimelineSettings;
+}
+
+export const DEFAULT_SCENARIO_SETTINGS: ScenarioSettings = {
+  seasonality: {
+    SMB: { november: 0, december: 0 },
+    MM: { november: 10, december: 10 },
+    ENT: { november: 20, december: 20 },
+    'ENT+': { november: 20, december: 20 },
+    Flagship: { november: 20, december: 20 },
+  },
+  integrationTimelineDays: {
+    SMB: 0,
+    MM: 0,
+    ENT: 0,
+    'ENT+': 0,
+    Flagship: 0,
+  },
+};
+
+export function createDefaultScenarioSettings(): ScenarioSettings {
+  return {
+    seasonality: {
+      SMB: { ...DEFAULT_SCENARIO_SETTINGS.seasonality.SMB },
+      MM: { ...DEFAULT_SCENARIO_SETTINGS.seasonality.MM },
+      ENT: { ...DEFAULT_SCENARIO_SETTINGS.seasonality.ENT },
+      'ENT+': { ...DEFAULT_SCENARIO_SETTINGS.seasonality['ENT+'] },
+      Flagship: { ...DEFAULT_SCENARIO_SETTINGS.seasonality.Flagship },
+    },
+    integrationTimelineDays: {
+      SMB: DEFAULT_SCENARIO_SETTINGS.integrationTimelineDays.SMB,
+      MM: DEFAULT_SCENARIO_SETTINGS.integrationTimelineDays.MM,
+      ENT: DEFAULT_SCENARIO_SETTINGS.integrationTimelineDays.ENT,
+      'ENT+': DEFAULT_SCENARIO_SETTINGS.integrationTimelineDays['ENT+'],
+      Flagship: DEFAULT_SCENARIO_SETTINGS.integrationTimelineDays.Flagship,
+    },
+  };
+}
+
+export function normalizeScenarioSettings(settings?: Partial<ScenarioSettings> | null): ScenarioSettings {
+  const defaults = createDefaultScenarioSettings();
+  if (!settings) return defaults;
+
+  const seasonality: SeasonalitySettings = {
+    SMB: {
+      november: settings.seasonality?.SMB?.november ?? defaults.seasonality.SMB.november,
+      december: settings.seasonality?.SMB?.december ?? defaults.seasonality.SMB.december,
+    },
+    MM: {
+      november: settings.seasonality?.MM?.november ?? defaults.seasonality.MM.november,
+      december: settings.seasonality?.MM?.december ?? defaults.seasonality.MM.december,
+    },
+    ENT: {
+      november: settings.seasonality?.ENT?.november ?? defaults.seasonality.ENT.november,
+      december: settings.seasonality?.ENT?.december ?? defaults.seasonality.ENT.december,
+    },
+    'ENT+': {
+      november: settings.seasonality?.['ENT+']?.november ?? defaults.seasonality['ENT+'].november,
+      december: settings.seasonality?.['ENT+']?.december ?? defaults.seasonality['ENT+'].december,
+    },
+    Flagship: {
+      november: settings.seasonality?.Flagship?.november ?? defaults.seasonality.Flagship.november,
+      december: settings.seasonality?.Flagship?.december ?? defaults.seasonality.Flagship.december,
+    },
+  };
+
+  const integrationTimelineDays: IntegrationTimelineSettings = {
+    SMB: settings.integrationTimelineDays?.SMB ?? defaults.integrationTimelineDays.SMB,
+    MM: settings.integrationTimelineDays?.MM ?? defaults.integrationTimelineDays.MM,
+    ENT: settings.integrationTimelineDays?.ENT ?? defaults.integrationTimelineDays.ENT,
+    'ENT+': settings.integrationTimelineDays?.['ENT+'] ?? defaults.integrationTimelineDays['ENT+'],
+    Flagship: settings.integrationTimelineDays?.Flagship ?? defaults.integrationTimelineDays.Flagship,
+  };
+
+  return {
+    seasonality,
+    integrationTimelineDays,
+  };
+}
 
 export interface SegmentConfig {
   label: string;
@@ -154,7 +250,7 @@ export interface Calculations {
   realizedRevenue: number;
   annualizedRunRate: number;
   monthlyShipments: number[];
-  quarterlyBreakdown: { Q1: number; Q2: number; Q3: number; Q4: number };
+  quarterlyBreakdown: QuarterBreakdown;
   masterGroupTotals: Record<string, number>;
   masterGroupRevenueBreakdown: Record<string, { realized: number; arr: number }>;
   gtmGroupTotals: Record<string, number>;
@@ -169,6 +265,7 @@ export interface FunnelData {
   monthlyOpps: number[];
   totalOpps: number;
   totalMerchants: number;
+  quarterlyOpps: QuarterBreakdown;
 }
 
 export interface FunnelCalculations {
@@ -210,3 +307,5 @@ export const QUARTERS = {
   Q3: [6, 7, 8],
   Q4: [9, 10, 11]
 } as const;
+
+export const QUARTER_KEYS = Object.keys(QUARTERS) as QuarterKey[];

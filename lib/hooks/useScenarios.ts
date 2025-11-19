@@ -2,7 +2,14 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { createClient } from '../supabase/client';
-import { ScenarioWithData, GtmGroupWithSegments, Segment, ExecutionPlan } from '../types';
+import {
+  ScenarioWithData,
+  GtmGroupWithSegments,
+  Segment,
+  ExecutionPlan,
+  createDefaultScenarioSettings,
+  normalizeScenarioSettings,
+} from '../types';
 
 const SHARED_USER_ID = '00000000-0000-0000-0000-000000000000';
 
@@ -37,6 +44,7 @@ export function useScenarios() {
       // Transform execution plan from array to single object
       const transformedData = data?.map(scenario => ({
         ...scenario,
+        settings: normalizeScenarioSettings(scenario.settings),
         plans: scenario.plans?.map((plan: any) => ({
           ...plan,
           gtm_groups: plan.gtm_groups?.map((gtm: any) => ({
@@ -116,6 +124,7 @@ export function useScenarios() {
           target_shipments: targetShipments,
           rps,
           collapsed: false,
+          settings: createDefaultScenarioSettings(),
         })
         .select()
         .single();

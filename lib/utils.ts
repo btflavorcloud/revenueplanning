@@ -1,16 +1,72 @@
-import { ScenarioWithData, PlanWithGtmGroups, Calculations, FunnelCalculations, QUARTERS } from './types';
+import {
+  ScenarioWithData,
+  Calculations,
+  FunnelCalculations,
+  QUARTERS,
+  QUARTER_KEYS,
+  QuarterBreakdown,
+  SeasonalitySettings,
+  IntegrationTimelineSettings,
+  SegmentType,
+} from './types';
+
+const FIRST_MONTH_RAMP_FACTOR = 0.5;
+
+const createEmptyQuarterBreakdown = (): QuarterBreakdown => ({
+  Q1: 0,
+  Q2: 0,
+  Q3: 0,
+  Q4: 0,
+});
+
+const getQuarterFromMonth = (monthIndex: number): keyof typeof QUARTERS | null => {
+  return QUARTER_KEYS.find((quarter) => QUARTERS[quarter].includes(monthIndex)) ?? null;
+};
+
+const getSeasonalMultiplier = (
+  segmentType: SegmentType,
+  monthIndex: number,
+  seasonalitySettings: SeasonalitySettings
+): number => {
+  const segmentSettings = seasonalitySettings[segmentType];
+  if (!segmentSettings) return 1;
+  if (monthIndex === 10) return 1 + (segmentSettings.november / 100);
+  if (monthIndex === 11) return 1 + (segmentSettings.december / 100);
+  return 1;
+};
+
+const getAnnualSeasonalityFactor = (
+  segmentType: SegmentType,
+  seasonalitySettings: SeasonalitySettings
+): number => {
+  const novMultiplier = getSeasonalMultiplier(segmentType, 10, seasonalitySettings);
+  const decMultiplier = getSeasonalMultiplier(segmentType, 11, seasonalitySettings);
+  const regularMonths = 12 - 2;
+  return regularMonths + novMultiplier + decMultiplier;
+};
+
+const getIntegrationMonths = (
+  segmentType: SegmentType,
+  integrationTimelineSettings: IntegrationTimelineSettings
+): number => {
+  const days = integrationTimelineSettings[segmentType] ?? 0;
+  if (days <= 0) return 0;
+  return Math.max(0, Math.ceil(days / 30));
+};
 
 export function calculateMetrics(
   scenario: ScenarioWithData,
   rps: number,
   targetShipments: number,
-  conversionRates: Record<string, { oppToClose: number; avgDaysToClose: number }>
+  _conversionRates: Record<string, { oppToClose: number; avgDaysToClose: number }>,
+  seasonalitySettings: SeasonalitySettings,
+  integrationTimelineSettings: IntegrationTimelineSettings
 ): Calculations {
   let totalShipments = 0;
   let realizedRevenue = 0;
   let annualizedRunRate = 0;
   const monthlyShipments = Array(12).fill(0);
-  const quarterlyBreakdown = { Q1: 0, Q2: 0, Q3: 0, Q4: 0 };
+  const quarterlyBreakdown = createEmptyQuarterBreakdown();
   const masterGroupTotals: Record<string, number> = {}; // Plan totals
   const masterGroupRevenueBreakdown: Record<string, { realized: number; arr: number }> = {}; // Plan revenue
   const gtmGroupTotals: Record<string, number> = {};
@@ -35,20 +91,25 @@ export function calculateMetrics(
 
         segment.launches.forEach((launchCount, monthIndex) => {
           if (launchCount > 0) {
-            const monthsRemaining = 12 - monthIndex;
+            const baseMonthlyShipments = launchCount * segment.spm;
+            const annualSeasonalityFactor = getAnnualSeasonalityFactor(segment.segment_type, seasonalitySettings);
+            const integrationMonths = getIntegrationMonths(segment.segment_type, integrationTimelineSettings);
+            const goLiveMonth = monthIndex + integrationMonths;
+            let shipmentsFromThisLaunch = 0;
 
-            // Peak season adjustment: 40% increase for November (index 10) and December (index 11)
-            const peakSeasonMultiplier = 1.4;
-            const peakSeasonMonths = monthIndex <= 10 ? 2 : 1; // Both Nov & Dec, or just Dec
-            const regularMonths = monthsRemaining - peakSeasonMonths;
+            if (goLiveMonth < 12) {
+              for (let m = goLiveMonth; m < 12; m++) {
+                const rampFactor = m === goLiveMonth ? FIRST_MONTH_RAMP_FACTOR : 1;
+                const seasonalMultiplier = getSeasonalMultiplier(segment.segment_type, m, seasonalitySettings);
+                const shipmentsThisMonth = baseMonthlyShipments * rampFactor * seasonalMultiplier;
 
-            // Calculate shipments with peak season boost
-            const shipmentsFromThisLaunch = (regularMonths * launchCount * segment.spm) +
-                                            (peakSeasonMonths * launchCount * segment.spm * peakSeasonMultiplier);
+                shipmentsFromThisLaunch += shipmentsThisMonth;
+                monthlyShipments[m] += shipmentsThisMonth;
+              }
+            }
+
             const revenueFromThisLaunch = shipmentsFromThisLaunch * rps;
-
-            // ARR: 10 regular months + 2 peak season months at 1.4x = 12.8 effective months
-            const annualizedFromThisLaunch = launchCount * segment.spm * rps * (10 + 2 * peakSeasonMultiplier);
+            const annualizedFromThisLaunch = baseMonthlyShipments * rps * annualSeasonalityFactor;
 
             totalShipments += shipmentsFromThisLaunch;
             segmentShipments += shipmentsFromThisLaunch;
@@ -65,12 +126,6 @@ export function calculateMetrics(
             gtmGroupARR += annualizedFromThisLaunch;
             planARR += annualizedFromThisLaunch;
 
-            // Apply peak season multiplier to monthly shipments
-            for (let m = monthIndex; m < 12; m++) {
-              const isPeakSeason = (m === 10 || m === 11); // November and December
-              const multiplier = isPeakSeason ? peakSeasonMultiplier : 1.0;
-              monthlyShipments[m] += launchCount * segment.spm * multiplier;
-            }
           }
         });
 
@@ -96,9 +151,7 @@ export function calculateMetrics(
   });
 
   monthlyShipments.forEach((shipments, monthIndex) => {
-    const quarter = Object.entries(QUARTERS).find(([_, months]) =>
-      (months as readonly number[]).includes(monthIndex)
-    )?.[0] as keyof typeof quarterlyBreakdown;
+    const quarter = getQuarterFromMonth(monthIndex);
     if (quarter) {
       quarterlyBreakdown[quarter] += shipments;
     }
@@ -126,7 +179,8 @@ export function calculateMetrics(
 
 export function calculateFunnelMetrics(
   scenario: ScenarioWithData,
-  conversionRates: Record<string, { oppToClose: number; avgDaysToClose: number }>
+  conversionRates: Record<string, { oppToClose: number; avgDaysToClose: number }>,
+  integrationTimelineSettings: IntegrationTimelineSettings
 ): FunnelCalculations {
   const monthlyOppsTotal = Array(12).fill(0);
   const masterGroupFunnelData: Record<string, any> = {}; // Plan funnel data
@@ -135,23 +189,29 @@ export function calculateFunnelMetrics(
 
   scenario.plans.forEach(plan => {
     const planMonthlyOpps = Array(12).fill(0);
+    const planQuarterlyOpps = createEmptyQuarterBreakdown();
     let planTotalOpps = 0;
     let planTotalMerchants = 0;
 
     plan.gtm_groups.forEach(gtmGroup => {
       const gtmGroupMonthlyOpps = Array(12).fill(0);
+      const gtmQuarterlyOpps = createEmptyQuarterBreakdown();
       let gtmGroupTotalOpps = 0;
       let gtmGroupTotalMerchants = 0;
 
       gtmGroup.segments.forEach(segment => {
         const rates = conversionRates[segment.segment_type];
         const segmentMonthlyOpps = Array(12).fill(0);
+        const segmentQuarterlyOpps = createEmptyQuarterBreakdown();
         let segmentTotalOpps = 0;
         let segmentTotalMerchants = 0;
 
-        segment.launches.forEach((merchantsToClose, closeMonth) => {
+        segment.launches.forEach((merchantsToClose, launchMonth) => {
           if (merchantsToClose > 0 && rates) {
-            const monthsBack = Math.round(rates.avgDaysToClose / 30);
+            const integrationMonths = getIntegrationMonths(segment.segment_type, integrationTimelineSettings);
+            const monthsBack = Math.max(0, Math.round(rates.avgDaysToClose / 30));
+
+            const closeMonth = Math.max(0, launchMonth - integrationMonths);
             const oppCreationMonth = Math.max(0, closeMonth - monthsBack);
 
             const oppsNeeded = Math.ceil(merchantsToClose / (rates.oppToClose / 100));
@@ -160,6 +220,13 @@ export function calculateFunnelMetrics(
             gtmGroupMonthlyOpps[oppCreationMonth] += oppsNeeded;
             planMonthlyOpps[oppCreationMonth] += oppsNeeded;
             monthlyOppsTotal[oppCreationMonth] += oppsNeeded;
+
+            const quarter = getQuarterFromMonth(oppCreationMonth);
+            if (quarter) {
+              segmentQuarterlyOpps[quarter] += oppsNeeded;
+              gtmQuarterlyOpps[quarter] += oppsNeeded;
+              planQuarterlyOpps[quarter] += oppsNeeded;
+            }
 
             segmentTotalOpps += oppsNeeded;
             gtmGroupTotalOpps += oppsNeeded;
@@ -173,21 +240,24 @@ export function calculateFunnelMetrics(
         segmentFunnelData[segment.id] = {
           monthlyOpps: segmentMonthlyOpps,
           totalOpps: segmentTotalOpps,
-          totalMerchants: segmentTotalMerchants
+          totalMerchants: segmentTotalMerchants,
+          quarterlyOpps: segmentQuarterlyOpps,
         };
       });
 
       gtmGroupFunnelData[gtmGroup.id] = {
         monthlyOpps: gtmGroupMonthlyOpps,
         totalOpps: gtmGroupTotalOpps,
-        totalMerchants: gtmGroupTotalMerchants
+        totalMerchants: gtmGroupTotalMerchants,
+        quarterlyOpps: gtmQuarterlyOpps,
       };
     });
 
     masterGroupFunnelData[plan.id] = {
       monthlyOpps: planMonthlyOpps,
       totalOpps: planTotalOpps,
-      totalMerchants: planTotalMerchants
+      totalMerchants: planTotalMerchants,
+      quarterlyOpps: planQuarterlyOpps,
     };
   });
 

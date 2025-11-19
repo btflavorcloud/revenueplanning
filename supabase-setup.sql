@@ -10,6 +10,7 @@ CREATE TABLE scenarios (
   target_shipments INTEGER DEFAULT 400000,
   rps DECIMAL(10,2) DEFAULT 40.00,
   collapsed BOOLEAN DEFAULT false,
+  settings JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

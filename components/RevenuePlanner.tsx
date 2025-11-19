@@ -2,22 +2,122 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
-  Target, TrendingUp, Download, DollarSign, Zap, ChevronDown, ChevronRight,
-  X, Save, Loader2, Plus, ChevronUp, RefreshCw, Clipboard
+  Target,
+  TrendingUp,
+  Download,
+  DollarSign,
+  Zap,
+  ChevronDown,
+  ChevronRight,
+  X,
+  Save,
+  Loader2,
+  Plus,
+  ChevronUp,
+  RefreshCw,
+  Settings,
 } from 'lucide-react';
 import { useScenarios } from '@/lib/hooks/useScenarios';
 import { calculateMetrics, calculateFunnelMetrics, debounce } from '@/lib/utils';
 import {
-  ScenarioWithData, MONTHS, SEGMENT_CONFIGS, SegmentType, GtmType, PlanWithGtmGroups, ExecutionPlan
+  ScenarioWithData,
+  MONTHS,
+  SEGMENT_CONFIGS,
+  SegmentType,
+  GtmType,
+  PlanWithGtmGroups,
+  createDefaultScenarioSettings,
+  ScenarioSettings,
+  QUARTER_KEYS,
+  QuarterBreakdown,
+  QUARTERS,
 } from '@/lib/types';
-import ExecutionTab from './ExecutionTab';
 
 interface RevenuePlannerProps {
   scenarioId: string;
 }
 
+const cloneSettings = (settings: ScenarioSettings): ScenarioSettings =>
+  JSON.parse(JSON.stringify(settings));
+
+const createQuarterTotals = (): QuarterBreakdown => ({
+  Q1: 0,
+  Q2: 0,
+  Q3: 0,
+  Q4: 0,
+});
+
+const getQuarterFromMonthIndex = (monthIndex: number): (typeof QUARTER_KEYS)[number] | null =>
+  QUARTER_KEYS.find((quarter) => QUARTERS[quarter].includes(monthIndex)) ?? null;
+
+const getSeasonalMultiplierFromSettings = (
+  settings: ScenarioSettings,
+  segmentType: SegmentType,
+  monthIndex: number
+): number => {
+  const segmentSettings = settings.seasonality[segmentType];
+  if (!segmentSettings) return 1;
+  if (monthIndex === 10) return 1 + (segmentSettings.november / 100);
+  if (monthIndex === 11) return 1 + (segmentSettings.december / 100);
+  return 1;
+};
+
+const getAnnualSeasonalityFactorFromSettings = (
+  settings: ScenarioSettings,
+  segmentType: SegmentType
+): number => {
+  const novMultiplier = getSeasonalMultiplierFromSettings(settings, segmentType, 10);
+  const decMultiplier = getSeasonalMultiplierFromSettings(settings, segmentType, 11);
+  return (12 - 2) + novMultiplier + decMultiplier;
+};
+
+const getIntegrationMonthsFromSettings = (
+  settings: ScenarioSettings,
+  segmentType: SegmentType
+): number => {
+  const days = settings.integrationTimelineDays[segmentType] ?? 0;
+  if (days <= 0) return 0;
+  return Math.max(0, Math.ceil(days / 30));
+};
+
+const filterScenarioBySegment = (scenario: ScenarioWithData, filter: 'all' | 'sales' | 'smb'): ScenarioWithData => {
+  const includeFn = filter === 'smb'
+    ? (segment: SegmentType) => segment === 'SMB'
+    : filter === 'sales'
+      ? (segment: SegmentType) => segment !== 'SMB'
+      : (_segment: SegmentType) => true;
+
+  return {
+    ...scenario,
+    plans: scenario.plans.map(plan => ({
+      ...plan,
+      gtm_groups: plan.gtm_groups.map(gtm => ({
+        ...gtm,
+        segments: gtm.segments.filter(segment => includeFn(segment.segment_type)),
+      })),
+    })),
+  };
+};
+
+interface QuarterVisualMetrics {
+  shipments: number;
+  baselineRealized: number;
+  stretchRealized: number;
+  baselineArr: number;
+  stretchArr: number;
+}
+
+interface PlanQuarterMetrics {
+  shipments: number;
+  realized: number;
+  arr: number;
+}
+
+const FIRST_MONTH_RAMP = 0.5;
+type FunnelSectionKey = 'aggregate' | 'quarterlySegments' | 'tactical';
+
 export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
-  const [activeTab, setActiveTab] = useState<'output' | 'funnel' | 'visual' | 'execution'>('output');
+  const [activeTab, setActiveTab] = useState<'output' | 'funnel' | 'visual' | 'settings'>('output');
   const [conversionRates, setConversionRates] = useState({
     SMB: { oppToClose: 25, avgDaysToClose: 60 },
     MM: { oppToClose: 20, avgDaysToClose: 90 },
@@ -27,25 +127,41 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
   });
 
   const { scenarios, loading, error, saving, syncing, updateScenario, addGtmGroup, updateGtmGroup,
-    deleteGtmGroup, addSegment, updateSegment, deleteSegment, updateExecutionPlan, refresh } = useScenarios();
+    deleteGtmGroup, addSegment, updateSegment, deleteSegment, refresh } = useScenarios();
 
-  const scenario = scenarios.find(s => s.id === scenarioId);
-  const [localRps, setLocalRps] = useState(scenario?.rps || 40);
-  const [localTargetShipments, setLocalTargetShipments] = useState(scenario?.target_shipments || 400000);
+  const baseScenario = scenarios.find(s => s.id === scenarioId);
+  const [segmentFilter, setSegmentFilter] = useState<'all' | 'sales' | 'smb'>('all');
+  const [localRps, setLocalRps] = useState(baseScenario?.rps || 40);
+  const [localTargetShipments, setLocalTargetShipments] = useState(baseScenario?.target_shipments || 400000);
 
   // Local state for segment launches and SPM - for instant UI updates
   const [localLaunches, setLocalLaunches] = useState<Record<string, number[]>>({});
   const [localSPM, setLocalSPM] = useState<Record<string, number>>({});
+  const [localSettings, setLocalSettings] = useState<ScenarioSettings>(createDefaultScenarioSettings());
+  const [funnelSectionsOpen, setFunnelSectionsOpen] = useState<Record<FunnelSectionKey, boolean>>({
+    aggregate: true,
+    quarterlySegments: true,
+    tactical: true,
+  });
+  const [planSummariesOpen, setPlanSummariesOpen] = useState({
+    baseline: true,
+    stretch: true,
+  });
+
+  const scenario = useMemo(() => {
+    if (!baseScenario) return null;
+    return filterScenarioBySegment(baseScenario, segmentFilter);
+  }, [baseScenario, segmentFilter]);
 
   useEffect(() => {
-    if (scenario) {
-      setLocalRps(scenario.rps);
-      setLocalTargetShipments(scenario.target_shipments);
+    if (baseScenario) {
+      setLocalRps(baseScenario.rps);
+      setLocalTargetShipments(baseScenario.target_shipments);
 
       // Initialize local launches and SPM from scenario data
       const launchesMap: Record<string, number[]> = {};
       const spmMap: Record<string, number> = {};
-      scenario.plans.forEach(plan => {
+      baseScenario.plans.forEach(plan => {
         plan.gtm_groups.forEach(gtmGroup => {
           gtmGroup.segments.forEach(segment => {
             launchesMap[segment.id] = [...segment.launches];
@@ -55,8 +171,9 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
       });
       setLocalLaunches(launchesMap);
       setLocalSPM(spmMap);
+      setLocalSettings(cloneSettings(baseScenario.settings));
     }
-  }, [scenario?.id]); // Only re-initialize when scenario ID changes
+  }, [baseScenario]);
 
   const debouncedUpdateScenario = useCallback(
     debounce((id: string, updates: any) => {
@@ -67,15 +184,15 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
 
   const handleRpsChange = (value: number) => {
     setLocalRps(value);
-    if (scenario) {
-      debouncedUpdateScenario(scenario.id, { rps: value });
+    if (baseScenario) {
+      debouncedUpdateScenario(baseScenario.id, { rps: value });
     }
   };
 
   const handleTargetShipmentsChange = (value: number) => {
     setLocalTargetShipments(value);
-    if (scenario) {
-      debouncedUpdateScenario(scenario.id, { target_shipments: value });
+    if (baseScenario) {
+      debouncedUpdateScenario(baseScenario.id, { target_shipments: value });
     }
   };
 
@@ -129,6 +246,54 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
     debouncedUpdateSegment(segmentId, { spm: numValue });
   };
 
+  const persistSettingsUpdate = (updater: (prev: ScenarioSettings) => ScenarioSettings) => {
+    if (!baseScenario) return;
+    setLocalSettings(prev => {
+      const updated = updater(prev);
+      debouncedUpdateScenario(baseScenario.id, { settings: updated });
+      return updated;
+    });
+  };
+
+  const handleSeasonalityChange = (segmentType: SegmentType, month: 'november' | 'december', value: string) => {
+    const numValue = parseFloat(value);
+    persistSettingsUpdate(prev => ({
+      ...prev,
+      seasonality: {
+        ...prev.seasonality,
+        [segmentType]: {
+          ...prev.seasonality[segmentType],
+          [month]: isNaN(numValue) ? 0 : numValue,
+        },
+      },
+    }));
+  };
+
+  const handleIntegrationTimelineChange = (segmentType: SegmentType, value: string) => {
+    const numValue = parseInt(value) || 0;
+    persistSettingsUpdate(prev => ({
+      ...prev,
+      integrationTimelineDays: {
+        ...prev.integrationTimelineDays,
+        [segmentType]: Math.max(0, numValue),
+      },
+    }));
+  };
+
+  const toggleFunnelSection = (section: FunnelSectionKey) => {
+    setFunnelSectionsOpen(prev => ({
+      ...prev,
+      [section]: !prev[section],
+    }));
+  };
+
+  const togglePlanSummary = (planKey: 'baseline' | 'stretch') => {
+    setPlanSummariesOpen(prev => ({
+      ...prev,
+      [planKey]: !prev[planKey],
+    }));
+  };
+
   const updateConversionRate = (segment: SegmentType, field: 'oppToClose' | 'avgDaysToClose', value: number) => {
     setConversionRates({
       ...conversionRates,
@@ -155,8 +320,15 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
       })),
     };
 
-    return calculateMetrics(tempScenario, localRps, localTargetShipments, conversionRates);
-  }, [scenario, localRps, localTargetShipments, conversionRates, localLaunches, localSPM]);
+    return calculateMetrics(
+      tempScenario,
+      localRps,
+      localTargetShipments,
+      conversionRates,
+      localSettings.seasonality,
+      localSettings.integrationTimelineDays
+    );
+  }, [scenario, localRps, localTargetShipments, conversionRates, localLaunches, localSPM, localSettings]);
 
   const funnelCalculations = useMemo(() => {
     if (!scenario) return null;
@@ -177,8 +349,158 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
       })),
     };
 
-    return calculateFunnelMetrics(tempScenario, conversionRates);
-  }, [scenario, conversionRates, localLaunches, localSPM]);
+    return calculateFunnelMetrics(
+      tempScenario,
+      conversionRates,
+      localSettings.integrationTimelineDays
+    );
+  }, [scenario, conversionRates, localLaunches, localSPM, localSettings]);
+
+  const segmentQuarterlyBreakdown = useMemo(() => {
+    if (!scenario || !funnelCalculations) return null;
+    const base = {} as Record<SegmentType, { opps: QuarterBreakdown; merchants: QuarterBreakdown }>;
+    (Object.keys(SEGMENT_CONFIGS) as SegmentType[]).forEach(segmentType => {
+      base[segmentType] = {
+        opps: createQuarterTotals(),
+        merchants: createQuarterTotals(),
+      };
+    });
+
+    scenario.plans.forEach(plan => {
+      plan.gtm_groups.forEach(gtmGroup => {
+        gtmGroup.segments.forEach(segment => {
+          const segFunnel = funnelCalculations.segmentFunnelData[segment.id];
+          if (segFunnel) {
+            QUARTER_KEYS.forEach(quarter => {
+              base[segment.segment_type].opps[quarter] += segFunnel.quarterlyOpps[quarter];
+            });
+          }
+
+          const launches = localLaunches[segment.id] || segment.launches;
+          launches.forEach((value, monthIndex) => {
+            if (!value) return;
+            const integrationMonths = getIntegrationMonthsFromSettings(localSettings, segment.segment_type);
+            const goLiveMonth = monthIndex + integrationMonths;
+            const quarter = getQuarterFromMonthIndex(goLiveMonth);
+            if (quarter && goLiveMonth < 12) {
+              base[segment.segment_type].merchants[quarter] += value;
+            }
+          });
+        });
+      });
+    });
+
+    return base;
+  }, [scenario, funnelCalculations, localLaunches, localSettings]);
+
+  const quarterVisualData = useMemo(() => {
+    if (!scenario) return null;
+
+    const data = QUARTER_KEYS.reduce<Record<string, QuarterVisualMetrics>>((acc, quarter) => {
+      acc[quarter] = {
+        shipments: 0,
+        baselineRealized: 0,
+        stretchRealized: 0,
+        baselineArr: 0,
+        stretchArr: 0,
+      };
+      return acc;
+    }, {});
+
+    scenario.plans.forEach(plan => {
+      plan.gtm_groups.forEach(gtm => {
+        gtm.segments.forEach(segment => {
+          const launches = localLaunches[segment.id] || segment.launches;
+          const spm = localSPM[segment.id] ?? segment.spm;
+
+          launches.forEach((launchCount, launchMonth) => {
+            if (!launchCount) return;
+            const baseMonthlyShipments = launchCount * spm;
+            const annualFactor = getAnnualSeasonalityFactorFromSettings(localSettings, segment.segment_type);
+            const integrationMonths = getIntegrationMonthsFromSettings(localSettings, segment.segment_type);
+            const goLiveMonth = launchMonth + integrationMonths;
+
+            if (goLiveMonth < 12) {
+              for (let month = goLiveMonth; month < 12; month++) {
+                const rampFactor = month === goLiveMonth ? FIRST_MONTH_RAMP : 1;
+                const seasonalMultiplier = getSeasonalMultiplierFromSettings(localSettings, segment.segment_type, month);
+                const shipmentsThisMonth = baseMonthlyShipments * rampFactor * seasonalMultiplier;
+                const revenueThisMonth = shipmentsThisMonth * localRps;
+                const quarter = getQuarterFromMonthIndex(month);
+                if (!quarter) continue;
+
+                data[quarter].shipments += shipmentsThisMonth;
+                if (plan.type === 'Baseline') {
+                  data[quarter].baselineRealized += revenueThisMonth;
+                } else if (plan.type === 'Stretch') {
+                  data[quarter].stretchRealized += revenueThisMonth;
+                }
+              }
+            }
+
+            const launchQuarter = getQuarterFromMonthIndex(goLiveMonth);
+            if (launchQuarter && goLiveMonth < 12) {
+              const annualizedRevenue = baseMonthlyShipments * localRps * annualFactor;
+              if (plan.type === 'Baseline') {
+                data[launchQuarter].baselineArr += annualizedRevenue;
+              } else if (plan.type === 'Stretch') {
+                data[launchQuarter].stretchArr += annualizedRevenue;
+              }
+            }
+          });
+        });
+      });
+    });
+
+    return data;
+  }, [scenario, localLaunches, localSPM, localSettings, localRps]);
+
+  const planQuarterData = useMemo(() => {
+    if (!scenario) return null;
+
+    const data: Record<string, Record<string, PlanQuarterMetrics>> = {};
+
+    scenario.plans.forEach(plan => {
+      data[plan.id] = QUARTER_KEYS.reduce<Record<string, PlanQuarterMetrics>>((acc, quarter) => {
+        acc[quarter] = { shipments: 0, realized: 0, arr: 0 };
+        return acc;
+      }, {} as Record<string, PlanQuarterMetrics>);
+
+      plan.gtm_groups.forEach(gtm => {
+        gtm.segments.forEach(segment => {
+          const launches = localLaunches[segment.id] || segment.launches;
+          const spm = localSPM[segment.id] ?? segment.spm;
+
+          launches.forEach((launchCount, launchMonth) => {
+            if (!launchCount) return;
+            const baseMonthlyShipments = launchCount * spm;
+            const annualFactor = getAnnualSeasonalityFactorFromSettings(localSettings, segment.segment_type);
+            const integrationMonths = getIntegrationMonthsFromSettings(localSettings, segment.segment_type);
+            const goLiveMonth = launchMonth + integrationMonths;
+
+            if (goLiveMonth < 12) {
+              for (let month = goLiveMonth; month < 12; month++) {
+                const quarter = getQuarterFromMonthIndex(month);
+                if (!quarter) continue;
+                const rampFactor = month === goLiveMonth ? FIRST_MONTH_RAMP : 1;
+                const seasonalMultiplier = getSeasonalMultiplierFromSettings(localSettings, segment.segment_type, month);
+                const shipmentsThisMonth = baseMonthlyShipments * rampFactor * seasonalMultiplier;
+                data[plan.id][quarter].shipments += shipmentsThisMonth;
+                data[plan.id][quarter].realized += shipmentsThisMonth * localRps;
+              }
+            }
+
+            const launchQuarter = getQuarterFromMonthIndex(goLiveMonth);
+            if (launchQuarter && goLiveMonth < 12) {
+              data[plan.id][launchQuarter].arr += baseMonthlyShipments * localRps * annualFactor;
+            }
+          });
+        });
+      });
+    });
+
+    return data;
+  }, [scenario, localLaunches, localSPM, localSettings, localRps]);
 
   const exportToCSV = () => {
     if (!scenario || !calculations) return;
@@ -224,7 +546,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
     );
   }
 
-  if (error || !scenario || !calculations || !funnelCalculations) {
+  if (error || !baseScenario || !scenario || !calculations || !funnelCalculations) {
     return (
       <div className="flex-1 flex items-center justify-center bg-gray-50">
         <div className="text-center">
@@ -443,6 +765,18 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                       />
                                       <span className="text-gray-600">days</span>
                                     </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-gray-700 font-semibold">Integration Timeline:</span>
+                                      <input
+                                        type="number"
+                                        value={localSettings.integrationTimelineDays[segment.segment_type]}
+                                        onChange={(e) => handleIntegrationTimelineChange(segment.segment_type, e.target.value)}
+                                        className="w-16 px-2 py-1 text-xs border border-gray-300 rounded"
+                                        min="0"
+                                        step="1"
+                                      />
+                                      <span className="text-gray-600">days</span>
+                                    </div>
                                   </div>
                                 </div>
                               )}
@@ -462,8 +796,18 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                   <tbody>
                                     <tr>
                                       {(localLaunches[segment.id] || segment.launches).map((value, monthIndex) => (
-                                        <td key={monthIndex} className="p-0 border border-gray-300">
-                                          <div className="flex flex-col">
+                                        <td key={monthIndex} className="p-0 border border-gray-300 align-top">
+                                          {activeTab === 'funnel' && segmentFunnel && (
+                                            <div className="bg-purple-100 border-b border-purple-300 text-center py-1">
+                                              <p className="text-[9px] uppercase font-semibold text-purple-700 tracking-wide">
+                                                Opps Needed
+                                              </p>
+                                              <p className="text-xs font-bold text-purple-900">
+                                                {(segmentFunnel.monthlyOpps[monthIndex] || 0).toLocaleString()}
+                                              </p>
+                                            </div>
+                                          )}
+                                          <div className={`flex flex-col ${activeTab === 'funnel' && segmentFunnel ? 'bg-white' : ''}`}>
                                             <button
                                               onClick={() => handleSegmentLaunchIncrement(segment.id, monthIndex, 1)}
                                               className="px-1 py-0.5 hover:bg-blue-100 text-gray-600 hover:text-blue-600 transition-colors border-b border-gray-200"
@@ -484,10 +828,10 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                               <ChevronDown className="w-3 h-3 mx-auto" />
                                             </button>
                                           </div>
-                                          {activeTab === 'funnel' && segmentFunnel && (
-                                            <div className="text-[10px] text-purple-700 font-bold text-center bg-purple-50 py-0.5 border-t border-purple-200">
-                                              {segmentFunnel.monthlyOpps[monthIndex] || '-'}
-                                            </div>
+                                          {activeTab === 'funnel' && (
+                                            <p className="text-[10px] text-gray-600 text-center py-0.5 font-semibold border-t border-gray-200">
+                                              New Merchants
+                                            </p>
                                           )}
                                         </td>
                                       ))}
@@ -540,6 +884,10 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
     );
   };
 
+  const summaryContainerClass = `bg-white border-b-2 border-gray-300 p-4 ${
+    activeTab === 'funnel' ? 'overflow-y-auto max-h-[70vh]' : 'flex-shrink-0'
+  }`;
+
   return (
     <div className="flex-1 bg-gray-50 overflow-hidden flex flex-col">
       {/* Header */}
@@ -548,9 +896,10 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
           <div>
             <input
               type="text"
-              value={scenario.name}
-              onChange={(e) => updateScenario(scenario.id, { name: e.target.value })}
+              value={baseScenario?.name || ''}
+              onChange={(e) => baseScenario && updateScenario(baseScenario.id, { name: e.target.value })}
               className="text-2xl font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-blue-700 rounded px-2 py-1"
+              disabled={!baseScenario}
             />
             <div className="flex items-center gap-4 mt-2">
               <div className="flex items-center gap-2">
@@ -563,6 +912,18 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                   min="0"
                 />
                 <span className="text-sm text-gray-600">shipments</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-semibold text-gray-700">Segment view:</label>
+                <select
+                  value={segmentFilter}
+                  onChange={(e) => setSegmentFilter(e.target.value as 'all' | 'sales' | 'smb')}
+                  className="px-2 py-1 text-sm border border-gray-300 rounded font-semibold bg-white"
+                >
+                  <option value="all">All</option>
+                  <option value="sales">Sales (MM, ENT, ENT+, Flagship)</option>
+                  <option value="smb">SMB</option>
+                </select>
               </div>
               <div className="flex items-center gap-2">
                 <label className="text-sm font-semibold text-gray-700">RPS:</label>
@@ -623,7 +984,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
           >
             <div className="flex items-center gap-2">
               <Target className="w-4 h-4" />
-              <span>Output View</span>
+              <span>New Merchants</span>
             </div>
           </button>
           <button
@@ -636,7 +997,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
           >
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4" />
-              <span>Funnel Planning</span>
+              <span>Top of Funnel</span>
             </div>
           </button>
           <button
@@ -653,62 +1014,228 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
             </div>
           </button>
           <button
-            onClick={() => setActiveTab('execution')}
+            onClick={() => setActiveTab('settings')}
             className={`px-6 py-2 rounded-lg font-semibold transition-colors ${
-              activeTab === 'execution'
+              activeTab === 'settings'
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
             }`}
           >
             <div className="flex items-center gap-2">
-              <Clipboard className="w-4 h-4" />
-              <span>Execution</span>
+              <Settings className="w-4 h-4" />
+              <span>Assumptions</span>
             </div>
           </button>
         </div>
       </div>
 
       {/* Summary Metrics */}
-      <div className="bg-white border-b-2 border-gray-300 p-4 flex-shrink-0">
+      <div className={summaryContainerClass}>
+        {segmentFilter !== 'all' && (
+          <div className="mb-4 px-3 py-2 bg-blue-50 border border-blue-200 rounded text-sm font-semibold text-blue-800">
+            Viewing {segmentFilter === 'smb' ? 'SMB only' : 'Sales (MM, ENT, ENT+, Flagship)'} segments
+          </div>
+        )}
         {/* Funnel View - Aggregate Top of Funnel */}
         {activeTab === 'funnel' && funnelCalculations && (
-          <div className="mb-4 bg-purple-50 rounded-lg p-4 border-2 border-purple-400">
-            <h3 className="text-sm font-bold text-purple-900 mb-3">Aggregate Top of Funnel Requirements</h3>
-            <div className="grid grid-cols-6 gap-3">
-              {/* SMB */}
-              {Object.entries(
-                scenario.plans.reduce((acc, plan) => {
-                  plan.gtm_groups.forEach(gtm => {
-                    gtm.segments.forEach(seg => {
-                      if (!acc[seg.segment_type]) {
-                        acc[seg.segment_type] = { opps: 0, merchants: 0 };
-                      }
-                      const segFunnel = funnelCalculations.segmentFunnelData[seg.id];
-                      if (segFunnel) {
-                        acc[seg.segment_type].opps += segFunnel.totalOpps || 0;
-                        acc[seg.segment_type].merchants += segFunnel.totalMerchants || 0;
-                      }
-                    });
-                  });
-                  return acc;
-                }, {} as Record<string, { opps: number; merchants: number }>)
-              ).map(([segmentType, data]) => (
-                <div key={segmentType} className="bg-white rounded-lg p-3 border border-purple-300">
-                  <div className={`text-xs font-bold mb-2 px-2 py-1 rounded text-center ${SEGMENT_CONFIGS[segmentType as SegmentType].color} ${SEGMENT_CONFIGS[segmentType as SegmentType].textColor}`}>
-                    {segmentType}
-                  </div>
-                  <div className="text-center">
-                    <p className="text-xs text-gray-600">Opps Needed</p>
-                    <p className="text-lg font-bold text-purple-900">{data.opps.toLocaleString()}</p>
-                  </div>
-                  <div className="text-center mt-2">
-                    <p className="text-xs text-gray-600">Merchants</p>
-                    <p className="text-sm font-bold text-gray-700">{data.merchants.toLocaleString()}</p>
-                  </div>
+          <>
+            <div className="mb-4 bg-purple-50 rounded-lg p-4 border-2 border-purple-400">
+              <button
+                onClick={() => toggleFunnelSection('aggregate')}
+                className="w-full flex items-center justify-between text-purple-900 font-bold text-sm"
+              >
+                <span>Aggregate Top of Funnel Requirements</span>
+                {funnelSectionsOpen.aggregate ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              </button>
+              {funnelSectionsOpen.aggregate && (
+                <div className="grid grid-cols-6 gap-3 mt-3">
+                  {Object.entries(
+                    scenario.plans.reduce((acc, plan) => {
+                      plan.gtm_groups.forEach(gtm => {
+                        gtm.segments.forEach(seg => {
+                          if (!acc[seg.segment_type]) {
+                            acc[seg.segment_type] = { opps: 0, merchants: 0 };
+                          }
+                          const segFunnel = funnelCalculations.segmentFunnelData[seg.id];
+                          if (segFunnel) {
+                            acc[seg.segment_type].opps += segFunnel.totalOpps || 0;
+                            acc[seg.segment_type].merchants += segFunnel.totalMerchants || 0;
+                          }
+                        });
+                      });
+                      return acc;
+                    }, {} as Record<string, { opps: number; merchants: number }>)
+                  ).map(([segmentType, data]) => (
+                    <div key={segmentType} className="bg-white rounded-lg p-3 border border-purple-300 flex flex-col gap-2">
+                      <div className={`text-xs font-bold px-2 py-1 rounded text-center ${SEGMENT_CONFIGS[segmentType as SegmentType].color} ${SEGMENT_CONFIGS[segmentType as SegmentType].textColor}`}>
+                        {segmentType}
+                      </div>
+                      <div className="text-center bg-purple-100 border border-purple-200 rounded-lg p-2">
+                        <p className="text-[10px] uppercase text-purple-700 font-semibold tracking-wide">Top of Funnel Needed</p>
+                        <p className="text-2xl font-black text-purple-900">{data.opps.toLocaleString()}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-xs text-gray-500 uppercase tracking-wide">New Merchants</p>
+                        <p className="text-sm font-bold text-gray-700">{data.merchants.toLocaleString()}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
-          </div>
+
+            {segmentQuarterlyBreakdown && (
+              <div className="mb-4 bg-white rounded-lg p-4 border-2 border-purple-200">
+                <button
+                  onClick={() => toggleFunnelSection('quarterlySegments')}
+                  className="w-full flex items-center justify-between text-purple-900 font-bold text-sm"
+                >
+                  <span>Quarterly Top of Funnel by Segment</span>
+                  {funnelSectionsOpen.quarterlySegments ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                </button>
+                {funnelSectionsOpen.quarterlySegments && (
+                  <div className="space-y-3 mt-3">
+                    {(Object.keys(SEGMENT_CONFIGS) as SegmentType[]).map(segmentType => (
+                      <div key={segmentType} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className={`inline-flex items-center px-3 py-1 rounded text-xs font-semibold ${SEGMENT_CONFIGS[segmentType].color} ${SEGMENT_CONFIGS[segmentType].textColor}`}>
+                            {segmentType}
+                          </div>
+                          <p className="text-xs text-gray-500 uppercase tracking-wide">TOP OF FUNNEL → MERCHANT YIELD</p>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs border border-purple-100 rounded-lg overflow-hidden">
+                            <thead>
+                              <tr className="bg-purple-50 text-purple-900">
+                                <th className="px-2 py-1 text-left font-semibold">Quarter</th>
+                                <th className="px-2 py-1 text-right font-semibold">Top of Funnel Needed</th>
+                                <th className="px-2 py-1 text-right font-semibold">New Merchants</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {QUARTER_KEYS.map(quarter => (
+                                <tr key={`${segmentType}-${quarter}`} className="border-t border-purple-100">
+                                  <td className="px-2 py-1 font-semibold text-gray-700">{quarter}</td>
+                                  <td className="px-2 py-1 text-right text-purple-900">
+                                    {segmentQuarterlyBreakdown[segmentType].opps[quarter].toLocaleString()}
+                                  </td>
+                                  <td className="px-2 py-1 text-right text-gray-900">
+                                    {segmentQuarterlyBreakdown[segmentType].merchants[quarter].toLocaleString()}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tactical GTM View */}
+            <div className="mb-4 bg-white rounded-lg p-4 border-2 border-purple-200">
+              <button
+                onClick={() => toggleFunnelSection('tactical')}
+                className="w-full flex items-center justify-between text-purple-900 font-bold text-sm"
+              >
+                <span>GTM Motion Top of Funnel Details</span>
+                {funnelSectionsOpen.tactical ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              </button>
+              {funnelSectionsOpen.tactical && (
+                <div className="grid gap-4 mt-3">
+                  {scenario.plans.map(plan => (
+                    <div key={plan.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <p className="text-xs uppercase text-gray-500 font-semibold tracking-wide">{plan.type} Plan</p>
+                          <p className="text-base font-bold text-gray-900">
+                            {funnelCalculations.masterGroupFunnelData[plan.id]?.totalOpps?.toLocaleString() || 0} opps
+                          </p>
+                        </div>
+                        <p className="text-sm text-gray-600">
+                          {funnelCalculations.masterGroupFunnelData[plan.id]?.totalMerchants?.toLocaleString() || 0} merchants
+                        </p>
+                      </div>
+
+                      <div className="space-y-3">
+                        {plan.gtm_groups.map(gtm => {
+                          const gtmFunnel = funnelCalculations.gtmGroupFunnelData[gtm.id];
+                          return (
+                            <div key={gtm.id} className="bg-white rounded-lg border border-gray-200 p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <div>
+                                  <p className="text-sm font-bold text-gray-900">{gtm.name}</p>
+                                  <p className="text-xs uppercase text-gray-500">{gtm.type}</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-xs text-gray-500 uppercase tracking-wide">Top of Funnel</p>
+                                  <p className="text-lg font-bold text-purple-900">
+                                    {gtmFunnel?.totalOpps?.toLocaleString() || 0}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-3 text-xs gap-3 mb-3">
+                                <div>
+                                  <p className="text-gray-500 uppercase tracking-wide text-[10px]">Merchants</p>
+                                  <p className="font-semibold text-gray-900">{gtmFunnel?.totalMerchants?.toLocaleString() || 0}</p>
+                                </div>
+                                <div>
+                                  <p className="text-gray-500 uppercase tracking-wide text-[10px]">Avg Sales Cycle</p>
+                                  <p className="font-semibold text-gray-900">
+                                    {Math.round(gtm.segments.reduce((sum, seg) => sum + conversionRates[seg.segment_type].avgDaysToClose, 0) /
+                                      (gtm.segments.length || 1)).toLocaleString()} days
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-gray-500 uppercase tracking-wide text-[10px]">Avg Integration</p>
+                                  <p className="font-semibold text-gray-900">
+                                    {Math.round(gtm.segments.reduce((sum, seg) => sum + localSettings.integrationTimelineDays[seg.segment_type], 0) /
+                                      (gtm.segments.length || 1)).toLocaleString()} days
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                {gtm.segments.map(segment => {
+                                  const rates = conversionRates[segment.segment_type];
+                                  const integrationDays = localSettings.integrationTimelineDays[segment.segment_type];
+                                  return (
+                                    <div key={segment.id} className="flex items-center justify-between text-xs border border-gray-100 rounded-lg px-3 py-2 bg-gray-50">
+                                      <div className="flex items-center gap-2">
+                                        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${SEGMENT_CONFIGS[segment.segment_type].color} ${SEGMENT_CONFIGS[segment.segment_type].textColor}`}>
+                                          {segment.segment_type}
+                                        </span>
+                                        <span className="text-gray-600">{segment.segment_type}</span>
+                                      </div>
+                                      <div className="flex items-center gap-4">
+                                        <div className="text-right">
+                                          <p className="text-[10px] uppercase text-gray-500">Close Rate</p>
+                                          <p className="font-semibold text-gray-900">{rates.oppToClose.toFixed(1)}%</p>
+                                        </div>
+                                        <div className="text-right">
+                                          <p className="text-[10px] uppercase text-gray-500">Sales Cycle</p>
+                                          <p className="font-semibold text-gray-900">{rates.avgDaysToClose}d</p>
+                                        </div>
+                                        <div className="text-right">
+                                          <p className="text-[10px] uppercase text-gray-500">Integration</p>
+                                          <p className="font-semibold text-gray-900">{integrationDays}d</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
         )}
 
         {/* Total Metrics */}
@@ -741,65 +1268,117 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
         {/* Baseline vs Stretch Breakdown */}
         <div className="grid grid-cols-2 gap-3">
           {/* Baseline */}
-          <div className="bg-gray-100 rounded-lg p-3 border-2 border-gray-400">
-            <p className="text-sm font-bold text-gray-900 mb-2">Baseline Plan</p>
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <div>
-                <p className="text-gray-600">Shipments</p>
-                <p className="font-bold text-gray-900">
-                  {calculations.masterGroupTotals[baselinePlan?.id || '']?.toLocaleString() || '0'}
-                </p>
+          <div className="bg-gray-100 rounded-lg border-2 border-gray-400">
+            <button
+              onClick={() => togglePlanSummary('baseline')}
+              className="w-full flex items-center justify-between px-3 py-2 border-b border-gray-300"
+            >
+              <p className="text-sm font-bold text-gray-900">Baseline Plan</p>
+              {planSummariesOpen.baseline ? <ChevronDown className="w-4 h-4 text-gray-700" /> : <ChevronRight className="w-4 h-4 text-gray-700" />}
+            </button>
+            {planSummariesOpen.baseline && (
+              <div className="p-3 space-y-3">
+                {planQuarterData && baselinePlan && planQuarterData[baselinePlan.id] && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border border-gray-200 rounded-lg overflow-hidden">
+                      <thead>
+                        <tr className="bg-white">
+                          <th className="px-2 py-1 text-left text-gray-600 font-semibold">Quarter</th>
+                          <th className="px-2 py-1 text-right text-gray-600 font-semibold">Shipments</th>
+                          <th className="px-2 py-1 text-right text-gray-600 font-semibold">Realized</th>
+                          <th className="px-2 py-1 text-right text-gray-600 font-semibold">ARR</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {QUARTER_KEYS.map(quarter => {
+                          const data = planQuarterData[baselinePlan.id][quarter];
+                          return (
+                            <tr key={`baseline-${quarter}`} className="border-t border-gray-100">
+                              <td className="px-2 py-1 font-semibold text-gray-700">{quarter}</td>
+                              <td className="px-2 py-1 text-right text-gray-900">{Math.round(data.shipments).toLocaleString()}</td>
+                              <td className="px-2 py-1 text-right text-gray-900">${Math.round(data.realized).toLocaleString()}</td>
+                              <td className="px-2 py-1 text-right text-gray-900">${Math.round(data.arr).toLocaleString()}</td>
+                            </tr>
+                          );
+                        })}
+                        <tr className="bg-gray-100 font-semibold text-gray-800 border-t border-gray-200">
+                          <td className="px-2 py-1">Total</td>
+                          <td className="px-2 py-1 text-right">
+                            {calculations.masterGroupTotals[baselinePlan?.id || '']?.toLocaleString() || '0'}
+                          </td>
+                          <td className="px-2 py-1 text-right">
+                            ${(calculations.masterGroupRevenueBreakdown[baselinePlan?.id || '']?.realized || 0).toLocaleString()}
+                          </td>
+                          <td className="px-2 py-1 text-right">
+                            ${(calculations.masterGroupRevenueBreakdown[baselinePlan?.id || '']?.arr || 0).toLocaleString()}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
-              <div>
-                <p className="text-gray-600">Realized</p>
-                <p className="font-bold text-gray-900">
-                  ${(calculations.masterGroupRevenueBreakdown[baselinePlan?.id || '']?.realized || 0).toLocaleString()}
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-600">ARR</p>
-                <p className="font-bold text-gray-900">
-                  ${(calculations.masterGroupRevenueBreakdown[baselinePlan?.id || '']?.arr || 0).toLocaleString()}
-                </p>
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Stretch */}
-          <div className="bg-orange-50 rounded-lg p-3 border-2 border-orange-400">
-            <p className="text-sm font-bold text-orange-900 mb-2">Stretch Plan</p>
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <div>
-                <p className="text-gray-600">Shipments</p>
-                <p className="font-bold text-gray-900">
-                  {calculations.masterGroupTotals[stretchPlan?.id || '']?.toLocaleString() || '0'}
-                </p>
+          <div className="bg-orange-50 rounded-lg border-2 border-orange-400">
+            <button
+              onClick={() => togglePlanSummary('stretch')}
+              className="w-full flex items-center justify-between px-3 py-2 border-b border-orange-200"
+            >
+              <p className="text-sm font-bold text-orange-900">Stretch Plan</p>
+              {planSummariesOpen.stretch ? <ChevronDown className="w-4 h-4 text-orange-700" /> : <ChevronRight className="w-4 h-4 text-orange-700" />}
+            </button>
+            {planSummariesOpen.stretch && (
+              <div className="p-3 space-y-3">
+                {planQuarterData && stretchPlan && planQuarterData[stretchPlan.id] && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border border-orange-200 rounded-lg overflow-hidden">
+                      <thead>
+                        <tr className="bg-orange-100">
+                          <th className="px-2 py-1 text-left text-orange-800 font-semibold">Quarter</th>
+                          <th className="px-2 py-1 text-right text-orange-800 font-semibold">Shipments</th>
+                          <th className="px-2 py-1 text-right text-orange-800 font-semibold">Realized</th>
+                          <th className="px-2 py-1 text-right text-orange-800 font-semibold">ARR</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {QUARTER_KEYS.map(quarter => {
+                          const data = planQuarterData[stretchPlan.id][quarter];
+                          return (
+                            <tr key={`stretch-${quarter}`} className="border-t border-orange-100">
+                              <td className="px-2 py-1 font-semibold text-orange-800">{quarter}</td>
+                              <td className="px-2 py-1 text-right text-orange-900">{Math.round(data.shipments).toLocaleString()}</td>
+                              <td className="px-2 py-1 text-right text-orange-900">${Math.round(data.realized).toLocaleString()}</td>
+                              <td className="px-2 py-1 text-right text-orange-900">${Math.round(data.arr).toLocaleString()}</td>
+                            </tr>
+                          );
+                        })}
+                        <tr className="bg-orange-100 font-semibold text-orange-900 border-t border-orange-200">
+                          <td className="px-2 py-1">Total</td>
+                          <td className="px-2 py-1 text-right">
+                            {calculations.masterGroupTotals[stretchPlan?.id || '']?.toLocaleString() || '0'}
+                          </td>
+                          <td className="px-2 py-1 text-right">
+                            ${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.realized || 0).toLocaleString()}
+                          </td>
+                          <td className="px-2 py-1 text-right">
+                            ${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.arr || 0).toLocaleString()}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
-              <div>
-                <p className="text-gray-600">Realized</p>
-                <p className="font-bold text-gray-900">
-                  ${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.realized || 0).toLocaleString()}
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-600">ARR</p>
-                <p className="font-bold text-gray-900">
-                  ${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.arr || 0).toLocaleString()}
-                </p>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
 
       {/* Main Content - Conditional Based on Tab */}
-      {activeTab === 'execution' ? (
-        <ExecutionTab
-          stretchGtmGroups={stretchPlan?.gtm_groups || []}
-          gtmGroupRevenueBreakdown={calculations.gtmGroupRevenueBreakdown}
-          onUpdateExecutionPlan={updateExecutionPlan}
-        />
-      ) : activeTab === 'visual' ? (
+      {activeTab === 'visual' ? (
         <div className="flex-1 overflow-y-auto p-6">
           <div className="bg-white rounded-lg shadow p-6">
             <h3 className="text-lg font-bold text-gray-900 mb-6">Revenue Growth Over Time</h3>
@@ -956,22 +1535,106 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
             </div>
 
             {/* Quarterly Summary */}
-            <div className="mt-8 pt-6 border-t-2 border-gray-300">
-              <h4 className="text-md font-bold text-gray-900 mb-4">Quarterly Breakdown</h4>
-              <div className="grid grid-cols-4 gap-4">
-                {Object.entries(calculations.quarterlyBreakdown).map(([quarter, shipments]) => (
-                  <div key={quarter} className="bg-gray-50 rounded-lg p-4 border-2 border-gray-300">
-                    <p className="text-sm font-semibold text-gray-600 mb-2">{quarter}</p>
-                    <p className="text-2xl font-bold text-gray-900">
-                      {(shipments / 3).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </p>
-                    <p className="text-xs text-gray-500">SPM avg</p>
-                    <p className="text-sm font-semibold text-gray-700 mt-2">
-                      ${((shipments / 3) * localRps).toLocaleString()} / mo
-                    </p>
-                  </div>
-                ))}
+            {quarterVisualData && (
+              <div className="mt-8 pt-6 border-t-2 border-gray-300">
+                <h4 className="text-md font-bold text-gray-900 mb-4">Quarterly Breakdown</h4>
+                <div className="grid grid-cols-4 gap-4">
+                  {QUARTER_KEYS.map((quarter) => {
+                    const data = quarterVisualData[quarter];
+                    return (
+                      <div key={quarter} className="bg-gray-50 rounded-lg p-4 border-2 border-gray-200">
+                        <p className="text-sm font-semibold text-gray-600 mb-2">{quarter}</p>
+                        <p className="text-xs uppercase text-gray-500 mb-1 tracking-wide">Shipments</p>
+                        <p className="text-2xl font-bold text-gray-900">
+                          {data.shipments.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </p>
+                        <div className="mt-4 space-y-2 text-xs">
+                          <div className="flex items-center justify-between text-blue-700">
+                            <span className="font-semibold">Baseline Realized</span>
+                            <span className="font-bold">${Math.round(data.baselineRealized).toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-blue-500">
+                            <span className="font-semibold">Baseline ARR</span>
+                            <span className="font-bold">${Math.round(data.baselineArr).toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-orange-700 border-t border-gray-200 pt-2">
+                            <span className="font-semibold">Stretch Realized</span>
+                            <span className="font-bold">${Math.round(data.stretchRealized).toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-orange-500">
+                            <span className="font-semibold">Stretch ARR</span>
+                            <span className="font-bold">${Math.round(data.stretchArr).toLocaleString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
+            )}
+          </div>
+        </div>
+      ) : activeTab === 'settings' ? (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="bg-white rounded-lg shadow border border-gray-200 p-6 space-y-6">
+            <div>
+              <h3 className="text-lg font-bold text-gray-900 mb-2">Peak Season Multipliers</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Adjust the percent increase applied to November and December shipments for each segment type.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
+                  <thead>
+                    <tr className="bg-gray-100 text-gray-700">
+                      <th className="px-4 py-2 text-left">Segment</th>
+                      <th className="px-4 py-2 text-left">November Boost</th>
+                      <th className="px-4 py-2 text-left">December Boost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(Object.keys(SEGMENT_CONFIGS) as SegmentType[]).map(segmentType => (
+                      <tr key={segmentType} className="border-t border-gray-200">
+                        <td className="px-4 py-3">
+                          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${SEGMENT_CONFIGS[segmentType].color} ${SEGMENT_CONFIGS[segmentType].textColor}`}>
+                            {segmentType}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              value={localSettings.seasonality[segmentType].november}
+                              onChange={(e) => handleSeasonalityChange(segmentType, 'november', e.target.value)}
+                              className="w-24 px-3 py-2 border border-gray-300 rounded"
+                              step="1"
+                            />
+                            <span className="text-gray-600 text-sm">%</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              value={localSettings.seasonality[segmentType].december}
+                              onChange={(e) => handleSeasonalityChange(segmentType, 'december', e.target.value)}
+                              className="w-24 px-3 py-2 border border-gray-300 rounded"
+                              step="1"
+                            />
+                            <span className="text-gray-600 text-sm">%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-900">
+              <p className="font-semibold mb-1">Ramp Reminder</p>
+              <p>
+                Merchants now ship 50% of their SPM in their first month before moving to full output.
+                Peak season multipliers apply on top of that ramp, so high-performing segments can capture seasonal upside automatically.
+              </p>
             </div>
           </div>
         </div>
