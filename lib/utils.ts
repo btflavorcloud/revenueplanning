@@ -20,7 +20,7 @@ const createEmptyQuarterBreakdown = (): QuarterBreakdown => ({
 });
 
 const getQuarterFromMonth = (monthIndex: number): keyof typeof QUARTERS | null => {
-  return QUARTER_KEYS.find((quarter) => QUARTERS[quarter].includes(monthIndex)) ?? null;
+  return QUARTER_KEYS.find((quarter) => (QUARTERS[quarter] as readonly number[]).includes(monthIndex)) ?? null;
 };
 
 const getSeasonalMultiplier = (

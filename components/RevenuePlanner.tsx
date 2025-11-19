@@ -48,7 +48,7 @@ const createQuarterTotals = (): QuarterBreakdown => ({
 });
 
 const getQuarterFromMonthIndex = (monthIndex: number): (typeof QUARTER_KEYS)[number] | null =>
-  QUARTER_KEYS.find((quarter) => QUARTERS[quarter].includes(monthIndex)) ?? null;
+  QUARTER_KEYS.find((quarter) => (QUARTERS[quarter] as readonly number[]).includes(monthIndex)) ?? null;
 
 const getSeasonalMultiplierFromSettings = (
   settings: ScenarioSettings,
