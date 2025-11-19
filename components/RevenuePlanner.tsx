@@ -31,6 +31,7 @@ import {
   QUARTER_KEYS,
   QuarterBreakdown,
   QUARTERS,
+  GTM_COLORS,
 } from '@/lib/types';
 
 interface RevenuePlannerProps {
@@ -1054,8 +1055,9 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                       plan.gtm_groups.forEach(gtm => {
                         gtm.segments.forEach(seg => {
                           if (!acc[seg.segment_type]) {
-                            acc[seg.segment_type] = { opps: 0, merchants: 0 };
+                            acc[seg.segment_type] = { opps: 0, merchants: 0, gtmGroups: new Set() };
                           }
+                          acc[seg.segment_type].gtmGroups.add(gtm.type as GtmType);
                           const segFunnel = funnelCalculations.segmentFunnelData[seg.id];
                           if (segFunnel) {
                             acc[seg.segment_type].opps += segFunnel.totalOpps || 0;
@@ -1064,11 +1066,21 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                         });
                       });
                       return acc;
-                    }, {} as Record<string, { opps: number; merchants: number }>)
+                    }, {} as Record<string, { opps: number; merchants: number; gtmGroups: Set<GtmType> }>)
                   ).map(([segmentType, data]) => (
                     <div key={segmentType} className="bg-white rounded-lg p-3 border border-purple-300 flex flex-col gap-2">
                       <div className={`text-xs font-bold px-2 py-1 rounded text-center ${SEGMENT_CONFIGS[segmentType as SegmentType].color} ${SEGMENT_CONFIGS[segmentType as SegmentType].textColor}`}>
                         {segmentType}
+                      </div>
+                      <div className="flex flex-wrap gap-1 justify-center">
+                        {Array.from(data.gtmGroups).map(gtmType => (
+                          <span
+                            key={gtmType}
+                            className={`text-[9px] px-1.5 py-0.5 rounded font-semibold ${GTM_COLORS[gtmType].bg} ${GTM_COLORS[gtmType].text} border ${GTM_COLORS[gtmType].border}`}
+                          >
+                            {gtmType}
+                          </span>
+                        ))}
                       </div>
                       <div className="text-center bg-purple-100 border border-purple-200 rounded-lg p-2">
                         <p className="text-[10px] uppercase text-purple-700 font-semibold tracking-wide">Top of Funnel Needed</p>
