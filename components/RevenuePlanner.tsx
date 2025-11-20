@@ -31,7 +31,6 @@ import {
   QUARTER_KEYS,
   QuarterBreakdown,
   QUARTERS,
-  GTM_COLORS,
 } from '@/lib/types';
 
 interface RevenuePlannerProps {
@@ -100,6 +99,18 @@ const filterScenarioBySegment = (scenario: ScenarioWithData, filter: 'all' | 'sa
   };
 };
 
+const filterScenarioBySource = (scenario: ScenarioWithData, filter: 'all' | GtmType): ScenarioWithData => {
+  if (filter === 'all') return scenario;
+
+  return {
+    ...scenario,
+    plans: scenario.plans.map(plan => ({
+      ...plan,
+      gtm_groups: plan.gtm_groups.filter(gtm => gtm.type === filter),
+    })),
+  };
+};
+
 interface QuarterVisualMetrics {
   shipments: number;
   baselineRealized: number;
@@ -132,6 +143,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
 
   const baseScenario = scenarios.find(s => s.id === scenarioId);
   const [segmentFilter, setSegmentFilter] = useState<'all' | 'sales' | 'smb'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | GtmType>('all');
   const [localRps, setLocalRps] = useState(baseScenario?.rps || 40);
   const [localTargetShipments, setLocalTargetShipments] = useState(baseScenario?.target_shipments || 400000);
 
@@ -151,8 +163,9 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
 
   const scenario = useMemo(() => {
     if (!baseScenario) return null;
-    return filterScenarioBySegment(baseScenario, segmentFilter);
-  }, [baseScenario, segmentFilter]);
+    const segmentFiltered = filterScenarioBySegment(baseScenario, segmentFilter);
+    return filterScenarioBySource(segmentFiltered, sourceFilter);
+  }, [baseScenario, segmentFilter, sourceFilter]);
 
   useEffect(() => {
     if (baseScenario) {
@@ -927,6 +940,20 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                 </select>
               </div>
               <div className="flex items-center gap-2">
+                <label className="text-sm font-semibold text-gray-700">Source:</label>
+                <select
+                  value={sourceFilter}
+                  onChange={(e) => setSourceFilter(e.target.value as 'all' | GtmType)}
+                  className="px-2 py-1 text-sm border border-gray-300 rounded font-semibold bg-white"
+                >
+                  <option value="all">All</option>
+                  <option value="Sales">Sales</option>
+                  <option value="Marketing">Marketing</option>
+                  <option value="Partnerships">Partnerships</option>
+                  <option value="Custom">Custom</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
                 <label className="text-sm font-semibold text-gray-700">RPS:</label>
                 <div className="relative">
                   <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
@@ -1032,9 +1059,11 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
 
       {/* Summary Metrics */}
       <div className={summaryContainerClass}>
-        {segmentFilter !== 'all' && (
+        {(segmentFilter !== 'all' || sourceFilter !== 'all') && (
           <div className="mb-4 px-3 py-2 bg-blue-50 border border-blue-200 rounded text-sm font-semibold text-blue-800">
-            Viewing {segmentFilter === 'smb' ? 'SMB only' : 'Sales (MM, ENT, ENT+, Flagship)'} segments
+            {segmentFilter !== 'all' && `Viewing ${segmentFilter === 'smb' ? 'SMB only' : 'Sales (MM, ENT, ENT+, Flagship)'} segments`}
+            {segmentFilter !== 'all' && sourceFilter !== 'all' && ' • '}
+            {sourceFilter !== 'all' && `Source: ${sourceFilter}`}
           </div>
         )}
         {/* Funnel View - Aggregate Top of Funnel */}
@@ -1055,9 +1084,8 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                       plan.gtm_groups.forEach(gtm => {
                         gtm.segments.forEach(seg => {
                           if (!acc[seg.segment_type]) {
-                            acc[seg.segment_type] = { opps: 0, merchants: 0, gtmGroups: new Set() };
+                            acc[seg.segment_type] = { opps: 0, merchants: 0 };
                           }
-                          acc[seg.segment_type].gtmGroups.add(gtm.type as GtmType);
                           const segFunnel = funnelCalculations.segmentFunnelData[seg.id];
                           if (segFunnel) {
                             acc[seg.segment_type].opps += segFunnel.totalOpps || 0;
@@ -1066,21 +1094,11 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                         });
                       });
                       return acc;
-                    }, {} as Record<string, { opps: number; merchants: number; gtmGroups: Set<GtmType> }>)
+                    }, {} as Record<string, { opps: number; merchants: number }>)
                   ).map(([segmentType, data]) => (
                     <div key={segmentType} className="bg-white rounded-lg p-3 border border-purple-300 flex flex-col gap-2">
                       <div className={`text-xs font-bold px-2 py-1 rounded text-center ${SEGMENT_CONFIGS[segmentType as SegmentType].color} ${SEGMENT_CONFIGS[segmentType as SegmentType].textColor}`}>
                         {segmentType}
-                      </div>
-                      <div className="flex flex-wrap gap-1 justify-center">
-                        {Array.from(data.gtmGroups).map(gtmType => (
-                          <span
-                            key={gtmType}
-                            className={`text-[9px] px-1.5 py-0.5 rounded font-semibold ${GTM_COLORS[gtmType].bg} ${GTM_COLORS[gtmType].text} border ${GTM_COLORS[gtmType].border}`}
-                          >
-                            {gtmType}
-                          </span>
-                        ))}
                       </div>
                       <div className="text-center bg-purple-100 border border-purple-200 rounded-lg p-2">
                         <p className="text-[10px] uppercase text-purple-700 font-semibold tracking-wide">Top of Funnel Needed</p>
