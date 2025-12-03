@@ -1028,7 +1028,8 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                 </div>
                               )}
 
-                              {/* Monthly Grid - Full Width */}
+                              {/* Monthly Grid - Full Width - Hidden on Funnel tab */}
+                              {activeTab !== 'funnel' && (
                               <div className="overflow-x-auto">
                                 <table className="w-full text-xs">
                                   <thead>
@@ -1044,17 +1045,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                     <tr>
                                       {(localLaunches[segment.id] || segment.launches).map((value, monthIndex) => (
                                         <td key={monthIndex} className="p-0 border border-gray-300 align-top">
-                                          {activeTab === 'funnel' && segmentFunnel && (
-                                            <div className="bg-purple-100 border-b border-purple-300 text-center py-1">
-                                              <p className="text-[9px] uppercase font-semibold text-purple-700 tracking-wide">
-                                                Opps Needed
-                                              </p>
-                                              <p className="text-xs font-bold text-purple-900">
-                                                {(segmentFunnel.monthlyOpps[monthIndex] || 0).toLocaleString()}
-                                              </p>
-                                            </div>
-                                          )}
-                                          <div className={`flex flex-col ${activeTab === 'funnel' && segmentFunnel ? 'bg-white' : ''}`}>
+                                          <div className="flex flex-col">
                                             <button
                                               onClick={() => handleSegmentLaunchIncrement(segment.id, monthIndex, 1)}
                                               className="px-1 py-0.5 hover:bg-blue-100 text-gray-600 hover:text-blue-600 transition-colors border-b border-gray-200"
@@ -1075,17 +1066,13 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                               <ChevronDown className="w-3 h-3 mx-auto" />
                                             </button>
                                           </div>
-                                          {activeTab === 'funnel' && (
-                                            <p className="text-[10px] text-gray-600 text-center py-0.5 font-semibold border-t border-gray-200">
-                                              New Merchants
-                                            </p>
-                                          )}
                                         </td>
                                       ))}
                                     </tr>
                                   </tbody>
                                 </table>
                               </div>
+                              )}
                             </div>
                           );
                         })}
