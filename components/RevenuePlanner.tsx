@@ -1555,7 +1555,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
               onClick={() => setPlanSummariesOpen(prev => ({ ...prev, monthly: !prev.monthly }))}
               className="w-full flex items-center justify-between px-3 py-2"
             >
-              <p className="text-sm font-bold text-blue-900">Monthly Breakdown Summary</p>
+              <p className="text-sm font-bold text-blue-900">Segment Group Summary</p>
               {planSummariesOpen.monthly ? <ChevronDown className="w-4 h-4 text-blue-700" /> : <ChevronRight className="w-4 h-4 text-blue-700" />}
             </button>
             {planSummariesOpen.monthly && (
