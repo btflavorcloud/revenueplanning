@@ -159,10 +159,11 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
     monthly: true,
     tactical: true,
   });
+  const [planSummaryOpen, setPlanSummaryOpen] = useState(true);
+  const [segmentSummaryOpen, setSegmentSummaryOpen] = useState(true);
   const [planSummariesOpen, setPlanSummariesOpen] = useState({
     baseline: true,
     stretch: true,
-    monthly: false,
   });
 
   const scenario = useMemo(() => {
@@ -1566,230 +1567,245 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
           </div>
         </div>
 
-        {/* Baseline vs Stretch Breakdown */}
-        <div className="grid grid-cols-2 gap-3">
-          {/* Baseline */}
-          <div className="bg-gray-100 rounded-lg border-2 border-gray-400">
-            <button
-              onClick={() => togglePlanSummary('baseline')}
-              className="w-full flex items-center justify-between px-3 py-2 border-b border-gray-300"
-            >
-              <p className="text-sm font-bold text-gray-900">Baseline Plan</p>
-              {planSummariesOpen.baseline ? <ChevronDown className="w-4 h-4 text-gray-700" /> : <ChevronRight className="w-4 h-4 text-gray-700" />}
-            </button>
-            {planSummariesOpen.baseline && (
-              <div className="p-3 space-y-3">
-                {planQuarterData && baselinePlan && planQuarterData[baselinePlan.id] && (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs border border-gray-200 rounded-lg overflow-hidden">
-                      <thead>
-                        <tr className="bg-white">
-                          <th className="px-2 py-1 text-left text-gray-600 font-semibold">Quarter</th>
-                          <th className="px-2 py-1 text-right text-gray-600 font-semibold">Shipments</th>
-                          <th className="px-2 py-1 text-right text-gray-600 font-semibold">Realized</th>
-                          <th className="px-2 py-1 text-right text-gray-600 font-semibold">ARR</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {QUARTER_KEYS.map(quarter => {
-                          const data = planQuarterData[baselinePlan.id][quarter];
-                          return (
-                            <tr key={`baseline-${quarter}`} className="border-t border-gray-100">
-                              <td className="px-2 py-1 font-semibold text-gray-700">{quarter}</td>
-                              <td className="px-2 py-1 text-right text-gray-900">{Math.round(data.shipments).toLocaleString()}</td>
-                              <td className="px-2 py-1 text-right text-gray-900">${Math.round(data.realized).toLocaleString()}</td>
-                              <td className="px-2 py-1 text-right text-gray-900">${Math.round(data.arr).toLocaleString()}</td>
-                            </tr>
-                          );
-                        })}
-                        <tr className="bg-gray-100 font-semibold text-gray-800 border-t border-gray-200">
-                          <td className="px-2 py-1">Total</td>
-                          <td className="px-2 py-1 text-right">
-                            {calculations.masterGroupTotals[baselinePlan?.id || '']?.toLocaleString() || '0'}
-                          </td>
-                          <td className="px-2 py-1 text-right">
-                            ${(calculations.masterGroupRevenueBreakdown[baselinePlan?.id || '']?.realized || 0).toLocaleString()}
-                          </td>
-                          <td className="px-2 py-1 text-right">
-                            ${(calculations.masterGroupRevenueBreakdown[baselinePlan?.id || '']?.arr || 0).toLocaleString()}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+        {/* Plan Summary - Consolidated Section */}
+        <div className="bg-blue-50 rounded-lg border-2 border-blue-400">
+          <button
+            onClick={() => setPlanSummaryOpen(!planSummaryOpen)}
+            className="w-full flex items-center justify-between px-3 py-2"
+          >
+            <p className="text-sm font-bold text-blue-900">Plan Summary</p>
+            {planSummaryOpen ? <ChevronDown className="w-4 h-4 text-blue-700" /> : <ChevronRight className="w-4 h-4 text-blue-700" />}
+          </button>
 
-          {/* Stretch */}
-          <div className="bg-orange-50 rounded-lg border-2 border-orange-400">
-            <button
-              onClick={() => togglePlanSummary('stretch')}
-              className="w-full flex items-center justify-between px-3 py-2 border-b border-orange-200"
-            >
-              <p className="text-sm font-bold text-orange-900">Stretch Plan</p>
-              {planSummariesOpen.stretch ? <ChevronDown className="w-4 h-4 text-orange-700" /> : <ChevronRight className="w-4 h-4 text-orange-700" />}
-            </button>
-            {planSummariesOpen.stretch && (
-              <div className="p-3 space-y-3">
-                {planQuarterData && stretchPlan && planQuarterData[stretchPlan.id] && (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs border border-orange-200 rounded-lg overflow-hidden">
-                      <thead>
-                        <tr className="bg-orange-100">
-                          <th className="px-2 py-1 text-left text-orange-800 font-semibold">Quarter</th>
-                          <th className="px-2 py-1 text-right text-orange-800 font-semibold">Shipments</th>
-                          <th className="px-2 py-1 text-right text-orange-800 font-semibold">Realized</th>
-                          <th className="px-2 py-1 text-right text-orange-800 font-semibold">ARR</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {QUARTER_KEYS.map(quarter => {
-                          const data = planQuarterData[stretchPlan.id][quarter];
-                          return (
-                            <tr key={`stretch-${quarter}`} className="border-t border-orange-100">
-                              <td className="px-2 py-1 font-semibold text-orange-800">{quarter}</td>
-                              <td className="px-2 py-1 text-right text-orange-900">{Math.round(data.shipments).toLocaleString()}</td>
-                              <td className="px-2 py-1 text-right text-orange-900">${Math.round(data.realized).toLocaleString()}</td>
-                              <td className="px-2 py-1 text-right text-orange-900">${Math.round(data.arr).toLocaleString()}</td>
-                            </tr>
-                          );
-                        })}
-                        <tr className="bg-orange-100 font-semibold text-orange-900 border-t border-orange-200">
-                          <td className="px-2 py-1">Total</td>
-                          <td className="px-2 py-1 text-right">
-                            {calculations.masterGroupTotals[stretchPlan?.id || '']?.toLocaleString() || '0'}
-                          </td>
-                          <td className="px-2 py-1 text-right">
-                            ${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.realized || 0).toLocaleString()}
-                          </td>
-                          <td className="px-2 py-1 text-right">
-                            ${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.arr || 0).toLocaleString()}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Monthly Summary Expandable */}
-        {monthlyReportData && (
-          <div className="mt-4 bg-blue-50 rounded-lg border-2 border-blue-400">
-            <button
-              onClick={() => setPlanSummariesOpen(prev => ({ ...prev, monthly: !prev.monthly }))}
-              className="w-full flex items-center justify-between px-3 py-2"
-            >
-              <p className="text-sm font-bold text-blue-900">Segment Summary</p>
-              {planSummariesOpen.monthly ? <ChevronDown className="w-4 h-4 text-blue-700" /> : <ChevronRight className="w-4 h-4 text-blue-700" />}
-            </button>
-            {planSummariesOpen.monthly && (
-              <div className="p-3">
-                <div className="grid grid-cols-2 gap-3">
-                  {/* Baseline Column */}
-                  <div className="space-y-2">
-                    <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">Baseline</p>
-                    {(['SMB', 'Mid-Market', 'Enterprise'] as SegmentGroup[]).map(segmentGroup => {
-                      const report = monthlyReportData.reports.find(
-                        r => r.planType === 'Baseline' && r.segmentGroup === segmentGroup
-                      );
-                      if (!report) return null;
-
-                      const lastMonth = report.monthlyData[11];
-                      const totalShipments = report.monthlyData.reduce((sum, m) => sum + m.shipments, 0);
-                      const totalMerchants = report.monthlyData.reduce((sum, m) => sum + m.goLiveMerchants, 0);
-                      const totalARR = report.monthlyData.reduce((sum, m) => sum + m.arr, 0);
-
-                      return (
-                        <div key={segmentGroup} className="bg-white rounded border border-gray-300 p-2">
-                          <p className="text-xs font-semibold text-gray-900 mb-1">{segmentGroup}</p>
-                          <div className="grid grid-cols-2 gap-1 text-[10px]">
-                            <div>
-                              <span className="text-gray-600">Total Merchants:</span>
-                              <span className="font-bold text-gray-900 ml-1">
-                                {totalMerchants.toLocaleString()}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Total Shipments:</span>
-                              <span className="font-bold text-gray-900 ml-1">
-                                {Math.round(totalShipments).toLocaleString()}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Year 1 Revenue:</span>
-                              <span className="font-bold text-green-900 ml-1">
-                                ${Math.round(lastMonth.cumulativeRevenue).toLocaleString()}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Total ARR:</span>
-                              <span className="font-bold text-blue-900 ml-1">
-                                ${Math.round(totalARR).toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
+          {planSummaryOpen && (
+            <div className="p-3 space-y-3">
+              {/* Baseline vs Stretch Quarterly Breakdown */}
+              <div className="grid grid-cols-2 gap-3">
+                {/* Baseline */}
+                <div className="bg-gray-100 rounded-lg border-2 border-gray-400">
+                  <button
+                    onClick={() => togglePlanSummary('baseline')}
+                    className="w-full flex items-center justify-between px-3 py-2 border-b border-gray-300"
+                  >
+                    <p className="text-sm font-bold text-gray-900">Baseline Plan</p>
+                    {planSummariesOpen.baseline ? <ChevronDown className="w-4 h-4 text-gray-700" /> : <ChevronRight className="w-4 h-4 text-gray-700" />}
+                  </button>
+                  {planSummariesOpen.baseline && (
+                    <div className="p-3 space-y-3">
+                      {planQuarterData && baselinePlan && planQuarterData[baselinePlan.id] && (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs border border-gray-200 rounded-lg overflow-hidden">
+                            <thead>
+                              <tr className="bg-white">
+                                <th className="px-2 py-1 text-left text-gray-600 font-semibold">Quarter</th>
+                                <th className="px-2 py-1 text-right text-gray-600 font-semibold">Shipments</th>
+                                <th className="px-2 py-1 text-right text-gray-600 font-semibold">Realized</th>
+                                <th className="px-2 py-1 text-right text-gray-600 font-semibold">ARR</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {QUARTER_KEYS.map(quarter => {
+                                const data = planQuarterData[baselinePlan.id][quarter];
+                                return (
+                                  <tr key={`baseline-${quarter}`} className="border-t border-gray-100">
+                                    <td className="px-2 py-1 font-semibold text-gray-700">{quarter}</td>
+                                    <td className="px-2 py-1 text-right text-gray-900">{Math.round(data.shipments).toLocaleString()}</td>
+                                    <td className="px-2 py-1 text-right text-gray-900">${Math.round(data.realized).toLocaleString()}</td>
+                                    <td className="px-2 py-1 text-right text-gray-900">${Math.round(data.arr).toLocaleString()}</td>
+                                  </tr>
+                                );
+                              })}
+                              <tr className="bg-gray-100 font-semibold text-gray-800 border-t border-gray-200">
+                                <td className="px-2 py-1">Total</td>
+                                <td className="px-2 py-1 text-right">
+                                  {calculations.masterGroupTotals[baselinePlan?.id || '']?.toLocaleString() || '0'}
+                                </td>
+                                <td className="px-2 py-1 text-right">
+                                  ${(calculations.masterGroupRevenueBreakdown[baselinePlan?.id || '']?.realized || 0).toLocaleString()}
+                                </td>
+                                <td className="px-2 py-1 text-right">
+                                  ${(calculations.masterGroupRevenueBreakdown[baselinePlan?.id || '']?.arr || 0).toLocaleString()}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
                         </div>
-                      );
-                    })}
-                  </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
-                  {/* Stretch Column */}
-                  <div className="space-y-2">
-                    <p className="text-xs font-bold text-orange-700 uppercase tracking-wide">Stretch</p>
-                    {(['SMB', 'Mid-Market', 'Enterprise'] as SegmentGroup[]).map(segmentGroup => {
-                      const report = monthlyReportData.reports.find(
-                        r => r.planType === 'Stretch' && r.segmentGroup === segmentGroup
-                      );
-                      if (!report) return null;
-
-                      const lastMonth = report.monthlyData[11];
-                      const totalShipments = report.monthlyData.reduce((sum, m) => sum + m.shipments, 0);
-                      const totalMerchants = report.monthlyData.reduce((sum, m) => sum + m.goLiveMerchants, 0);
-                      const totalARR = report.monthlyData.reduce((sum, m) => sum + m.arr, 0);
-
-                      return (
-                        <div key={segmentGroup} className="bg-orange-50 rounded border border-orange-300 p-2">
-                          <p className="text-xs font-semibold text-orange-900 mb-1">{segmentGroup}</p>
-                          <div className="grid grid-cols-2 gap-1 text-[10px]">
-                            <div>
-                              <span className="text-orange-700">Total Merchants:</span>
-                              <span className="font-bold text-orange-900 ml-1">
-                                {totalMerchants.toLocaleString()}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-orange-700">Total Shipments:</span>
-                              <span className="font-bold text-orange-900 ml-1">
-                                {Math.round(totalShipments).toLocaleString()}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-orange-700">Year 1 Revenue:</span>
-                              <span className="font-bold text-green-900 ml-1">
-                                ${Math.round(lastMonth.cumulativeRevenue).toLocaleString()}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-orange-700">Total ARR:</span>
-                              <span className="font-bold text-blue-900 ml-1">
-                                ${Math.round(totalARR).toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
+                {/* Stretch */}
+                <div className="bg-orange-50 rounded-lg border-2 border-orange-400">
+                  <button
+                    onClick={() => togglePlanSummary('stretch')}
+                    className="w-full flex items-center justify-between px-3 py-2 border-b border-orange-200"
+                  >
+                    <p className="text-sm font-bold text-orange-900">Stretch Plan</p>
+                    {planSummariesOpen.stretch ? <ChevronDown className="w-4 h-4 text-orange-700" /> : <ChevronRight className="w-4 h-4 text-orange-700" />}
+                  </button>
+                  {planSummariesOpen.stretch && (
+                    <div className="p-3 space-y-3">
+                      {planQuarterData && stretchPlan && planQuarterData[stretchPlan.id] && (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs border border-orange-200 rounded-lg overflow-hidden">
+                            <thead>
+                              <tr className="bg-orange-100">
+                                <th className="px-2 py-1 text-left text-orange-800 font-semibold">Quarter</th>
+                                <th className="px-2 py-1 text-right text-orange-800 font-semibold">Shipments</th>
+                                <th className="px-2 py-1 text-right text-orange-800 font-semibold">Realized</th>
+                                <th className="px-2 py-1 text-right text-orange-800 font-semibold">ARR</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {QUARTER_KEYS.map(quarter => {
+                                const data = planQuarterData[stretchPlan.id][quarter];
+                                return (
+                                  <tr key={`stretch-${quarter}`} className="border-t border-orange-100">
+                                    <td className="px-2 py-1 font-semibold text-orange-800">{quarter}</td>
+                                    <td className="px-2 py-1 text-right text-orange-900">{Math.round(data.shipments).toLocaleString()}</td>
+                                    <td className="px-2 py-1 text-right text-orange-900">${Math.round(data.realized).toLocaleString()}</td>
+                                    <td className="px-2 py-1 text-right text-orange-900">${Math.round(data.arr).toLocaleString()}</td>
+                                  </tr>
+                                );
+                              })}
+                              <tr className="bg-orange-100 font-semibold text-orange-900 border-t border-orange-200">
+                                <td className="px-2 py-1">Total</td>
+                                <td className="px-2 py-1 text-right">
+                                  {calculations.masterGroupTotals[stretchPlan?.id || '']?.toLocaleString() || '0'}
+                                </td>
+                                <td className="px-2 py-1 text-right">
+                                  ${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.realized || 0).toLocaleString()}
+                                </td>
+                                <td className="px-2 py-1 text-right">
+                                  ${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.arr || 0).toLocaleString()}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
                         </div>
-                      );
-                    })}
-                  </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
-          </div>
-        )}
+
+              {/* Segment Summary */}
+              {monthlyReportData && (
+                <div className="bg-white rounded-lg border border-blue-300">
+                  <button
+                    onClick={() => setSegmentSummaryOpen(!segmentSummaryOpen)}
+                    className="w-full flex items-center justify-between px-3 py-2 bg-blue-100"
+                  >
+                    <p className="text-sm font-bold text-blue-900">Segment Summary</p>
+                    {segmentSummaryOpen ? <ChevronDown className="w-4 h-4 text-blue-700" /> : <ChevronRight className="w-4 h-4 text-blue-700" />}
+                  </button>
+                  {segmentSummaryOpen && (
+                    <div className="p-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* Baseline Column */}
+                        <div className="space-y-2">
+                          <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">Baseline</p>
+                          {(['SMB', 'Mid-Market', 'Enterprise'] as SegmentGroup[]).map(segmentGroup => {
+                            const report = monthlyReportData.reports.find(
+                              r => r.planType === 'Baseline' && r.segmentGroup === segmentGroup
+                            );
+                            if (!report) return null;
+
+                            const lastMonth = report.monthlyData[11];
+                            const totalShipments = report.monthlyData.reduce((sum, m) => sum + m.shipments, 0);
+                            const totalMerchants = report.monthlyData.reduce((sum, m) => sum + m.goLiveMerchants, 0);
+                            const totalARR = report.monthlyData.reduce((sum, m) => sum + m.arr, 0);
+
+                            return (
+                              <div key={segmentGroup} className="bg-white rounded border border-gray-300 p-2">
+                                <p className="text-xs font-semibold text-gray-900 mb-1">{segmentGroup}</p>
+                                <div className="grid grid-cols-2 gap-1 text-[10px]">
+                                  <div>
+                                    <span className="text-gray-600">Total Merchants:</span>
+                                    <span className="font-bold text-gray-900 ml-1">
+                                      {totalMerchants.toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-600">Total Shipments:</span>
+                                    <span className="font-bold text-gray-900 ml-1">
+                                      {Math.round(totalShipments).toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-600">Year 1 Revenue:</span>
+                                    <span className="font-bold text-green-900 ml-1">
+                                      ${Math.round(lastMonth.cumulativeRevenue).toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-600">Total ARR:</span>
+                                    <span className="font-bold text-blue-900 ml-1">
+                                      ${Math.round(totalARR).toLocaleString()}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Stretch Column */}
+                        <div className="space-y-2">
+                          <p className="text-xs font-bold text-orange-700 uppercase tracking-wide">Stretch</p>
+                          {(['SMB', 'Mid-Market', 'Enterprise'] as SegmentGroup[]).map(segmentGroup => {
+                            const report = monthlyReportData.reports.find(
+                              r => r.planType === 'Stretch' && r.segmentGroup === segmentGroup
+                            );
+                            if (!report) return null;
+
+                            const lastMonth = report.monthlyData[11];
+                            const totalShipments = report.monthlyData.reduce((sum, m) => sum + m.shipments, 0);
+                            const totalMerchants = report.monthlyData.reduce((sum, m) => sum + m.goLiveMerchants, 0);
+                            const totalARR = report.monthlyData.reduce((sum, m) => sum + m.arr, 0);
+
+                            return (
+                              <div key={segmentGroup} className="bg-orange-50 rounded border border-orange-300 p-2">
+                                <p className="text-xs font-semibold text-orange-900 mb-1">{segmentGroup}</p>
+                                <div className="grid grid-cols-2 gap-1 text-[10px]">
+                                  <div>
+                                    <span className="text-orange-700">Total Merchants:</span>
+                                    <span className="font-bold text-orange-900 ml-1">
+                                      {totalMerchants.toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-orange-700">Total Shipments:</span>
+                                    <span className="font-bold text-orange-900 ml-1">
+                                      {Math.round(totalShipments).toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-orange-700">Year 1 Revenue:</span>
+                                    <span className="font-bold text-green-900 ml-1">
+                                      ${Math.round(lastMonth.cumulativeRevenue).toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-orange-700">Total ARR:</span>
+                                    <span className="font-bold text-blue-900 ml-1">
+                                      ${Math.round(totalARR).toLocaleString()}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Main Content - Conditional Based on Tab */}
