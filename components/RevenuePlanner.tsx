@@ -982,6 +982,52 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                 </div>
                               )}
 
+                              {/* Funnel Summary - Top of Funnel → Merchant Yield */}
+                              {activeTab === 'funnel' && segmentFunnel && (
+                                <div className="mb-3 p-3 bg-purple-50 rounded-lg border border-purple-300">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <p className="text-xs font-bold text-purple-900 uppercase tracking-wide">Top of Funnel → Merchant Yield</p>
+                                    <p className="text-[10px] text-gray-500">Monthly breakdown</p>
+                                  </div>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-xs">
+                                      <thead>
+                                        <tr>
+                                          <th className="px-2 py-1 text-left text-gray-700 font-semibold bg-gray-100 border border-gray-300 w-32">Metric</th>
+                                          {MONTHS.map((month) => (
+                                            <th key={month} className="px-1 py-1 text-center text-gray-600 font-semibold bg-gray-100 border border-gray-300">
+                                              {month}
+                                            </th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        <tr>
+                                          <td className="px-2 py-1 text-left font-semibold text-purple-900 bg-purple-100 border border-gray-300">
+                                            Opps Needed
+                                          </td>
+                                          {segmentFunnel.monthlyOpps.map((opps, monthIndex) => (
+                                            <td key={monthIndex} className="px-1 py-1 text-center font-bold text-purple-900 bg-white border border-gray-300">
+                                              {opps.toLocaleString()}
+                                            </td>
+                                          ))}
+                                        </tr>
+                                        <tr>
+                                          <td className="px-2 py-1 text-left font-semibold text-blue-900 bg-blue-100 border border-gray-300">
+                                            New Merchants
+                                          </td>
+                                          {(localLaunches[segment.id] || segment.launches).map((launches, monthIndex) => (
+                                            <td key={monthIndex} className="px-1 py-1 text-center font-bold text-gray-900 bg-white border border-gray-300">
+                                              {launches.toLocaleString()}
+                                            </td>
+                                          ))}
+                                        </tr>
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              )}
+
                               {/* Monthly Grid - Full Width */}
                               <div className="overflow-x-auto">
                                 <table className="w-full text-xs">
