@@ -548,7 +548,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
     return data;
   }, [scenario, localLaunches, localSPM, localSettings, localRps]);
 
-  const exportToCSV = () => {
+  const exportSummaryCSV = () => {
     if (!scenario || !calculations || !monthlyReportData) return;
 
     const rows = [];
@@ -564,12 +564,15 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
       'Shipments',
       'Realized Revenue',
       'Cumulative Revenue',
-      'ARR Added'
+      'ARR Added',
+      'Cumulative ARR'
     ]);
 
-    // Data rows - long format
+    // Data rows - long format with cumulative ARR
     monthlyReportData.reports.forEach(report => {
+      let cumulativeARR = 0;
       report.monthlyData.forEach((monthData, monthIndex) => {
+        cumulativeARR += monthData.arr;
         rows.push([
           report.planType,
           report.segmentGroup,
@@ -580,7 +583,8 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
           Math.round(monthData.shipments),
           Math.round(monthData.realizedRevenue),
           Math.round(monthData.cumulativeRevenue),
-          Math.round(monthData.arr)
+          Math.round(monthData.arr),
+          Math.round(cumulativeARR)
         ]);
       });
     });
@@ -588,7 +592,6 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
     // Generate CSV with proper escaping
     const csvContent = rows.map(row =>
       row.map(cell => {
-        // Convert to string and escape if needed
         const cellStr = String(cell);
         if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
           return `"${cellStr.replace(/"/g, '""')}"`;
@@ -601,7 +604,124 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `gtm-monthly-report-${scenario.name}-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `gtm-summary-${scenario.name}-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const exportDetailedCSV = () => {
+    if (!scenario || !funnelCalculations) return;
+
+    const rows = [];
+
+    // Header row
+    rows.push([
+      'Plan',
+      'GTM Motion',
+      'Segment',
+      'Month',
+      'Top of Funnel',
+      'Scheduled Launches',
+      'Go-Live Merchants',
+      'Shipments',
+      'Realized Revenue',
+      'Cumulative Revenue',
+      'ARR Added',
+      'Cumulative ARR'
+    ]);
+
+    // Detailed data by individual segment
+    scenario.plans.forEach(plan => {
+      plan.gtm_groups.forEach(gtmGroup => {
+        gtmGroup.segments.forEach(segment => {
+          const segmentFunnel = funnelCalculations.segmentFunnelData[segment.id];
+          const integrationMonths = Math.ceil((localSettings.integrationTimelineDays[segment.segment_type] || 0) / 30);
+          const annualSeasonalityFactor = getAnnualSeasonalityFactorFromSettings(localSettings, segment.segment_type);
+
+          // Calculate monthly data for this segment
+          const monthlyData = Array(12).fill(null).map(() => ({
+            topOfFunnel: 0,
+            scheduledLaunches: 0,
+            goLiveMerchants: 0,
+            shipments: 0,
+            realizedRevenue: 0,
+            arr: 0
+          }));
+
+          // Process each launch
+          (localLaunches[segment.id] || segment.launches).forEach((launchCount, launchMonth) => {
+            if (launchCount === 0) return;
+
+            // Scheduled launches
+            monthlyData[launchMonth].scheduledLaunches += launchCount;
+
+            // Go-live and revenue
+            const goLiveMonth = launchMonth + integrationMonths;
+            if (goLiveMonth < 12) {
+              monthlyData[goLiveMonth].goLiveMerchants += launchCount;
+
+              const baseMonthlyShipments = launchCount * (localSPM[segment.id] ?? segment.spm);
+              for (let m = goLiveMonth; m < 12; m++) {
+                const rampFactor = m === goLiveMonth ? FIRST_MONTH_RAMP : 1;
+                const seasonalMultiplier = getSeasonalMultiplierFromSettings(localSettings, segment.segment_type, m);
+                const shipments = baseMonthlyShipments * rampFactor * seasonalMultiplier;
+                monthlyData[m].shipments += shipments;
+                monthlyData[m].realizedRevenue += shipments * localRps;
+              }
+
+              monthlyData[goLiveMonth].arr += baseMonthlyShipments * localRps * annualSeasonalityFactor;
+            }
+          });
+
+          // Top of funnel from funnel calculations
+          if (segmentFunnel) {
+            segmentFunnel.monthlyOpps.forEach((opps, monthIndex) => {
+              monthlyData[monthIndex].topOfFunnel = opps;
+            });
+          }
+
+          // Output rows with cumulative values
+          let cumulativeRevenue = 0;
+          let cumulativeARR = 0;
+          monthlyData.forEach((data, monthIndex) => {
+            cumulativeRevenue += data.realizedRevenue;
+            cumulativeARR += data.arr;
+
+            rows.push([
+              plan.type,
+              gtmGroup.name,
+              segment.segment_type,
+              MONTHS[monthIndex],
+              Math.round(data.topOfFunnel),
+              data.scheduledLaunches,
+              data.goLiveMerchants,
+              Math.round(data.shipments),
+              Math.round(data.realizedRevenue),
+              Math.round(cumulativeRevenue),
+              Math.round(data.arr),
+              Math.round(cumulativeARR)
+            ]);
+          });
+        });
+      });
+    });
+
+    // Generate CSV
+    const csvContent = rows.map(row =>
+      row.map(cell => {
+        const cellStr = String(cell);
+        if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+          return `"${cellStr.replace(/"/g, '""')}"`;
+        }
+        return cellStr;
+      }).join(',')
+    ).join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `gtm-detailed-${scenario.name}-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
   };
@@ -1048,11 +1168,20 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
               Refresh
             </button>
             <button
-              onClick={exportToCSV}
+              onClick={exportSummaryCSV}
               className="flex items-center gap-2 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition-colors text-sm"
+              title="Export aggregated summary by segment group"
             >
               <Download className="w-4 h-4" />
-              Export CSV
+              Export Summary
+            </button>
+            <button
+              onClick={exportDetailedCSV}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white rounded-lg hover:bg-blue-800 transition-colors text-sm"
+              title="Export detailed breakdown by GTM motion and segment"
+            >
+              <Download className="w-4 h-4" />
+              Export Detailed
             </button>
           </div>
         </div>
