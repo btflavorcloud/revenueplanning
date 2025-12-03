@@ -303,6 +303,8 @@ export function calculateMonthlyReportData(
         cumulativeRevenue: 0,
         arr: 0,
         shipments: 0,
+        cumulativeShipments: 0,
+        cumulativeARR: 0,
       })),
       'Mid-Market': Array(12).fill(null).map(() => ({
         scheduledLaunches: 0,
@@ -312,6 +314,8 @@ export function calculateMonthlyReportData(
         cumulativeRevenue: 0,
         arr: 0,
         shipments: 0,
+        cumulativeShipments: 0,
+        cumulativeARR: 0,
       })),
       'Enterprise': Array(12).fill(null).map(() => ({
         scheduledLaunches: 0,
@@ -321,6 +325,8 @@ export function calculateMonthlyReportData(
         cumulativeRevenue: 0,
         arr: 0,
         shipments: 0,
+        cumulativeShipments: 0,
+        cumulativeARR: 0,
       })),
     };
 
@@ -378,12 +384,20 @@ export function calculateMonthlyReportData(
       });
     });
 
-    // Calculate cumulative revenue for each segment group
+    // Calculate cumulative values for each segment group
     (['SMB', 'Mid-Market', 'Enterprise'] as SegmentGroup[]).forEach(segmentGroup => {
-      let cumulative = 0;
+      let cumulativeRevenue = 0;
+      let cumulativeShipments = 0;
+      let cumulativeARR = 0;
+
       segmentGroupData[segmentGroup].forEach(monthData => {
-        cumulative += monthData.realizedRevenue;
-        monthData.cumulativeRevenue = cumulative;
+        cumulativeRevenue += monthData.realizedRevenue;
+        cumulativeShipments += monthData.shipments;
+        cumulativeARR += monthData.arr;
+
+        monthData.cumulativeRevenue = cumulativeRevenue;
+        monthData.cumulativeShipments = cumulativeShipments;
+        monthData.cumulativeARR = cumulativeARR;
       });
 
       // Add to reports

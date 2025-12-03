@@ -563,17 +563,16 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
       'Scheduled Launches',
       'Go-Live Merchants',
       'Shipments',
+      'Cumulative Shipments',
       'Realized Revenue',
       'Cumulative Revenue',
       'ARR Added',
       'Cumulative ARR'
     ]);
 
-    // Data rows - long format with cumulative ARR
+    // Data rows - long format with cumulative values
     monthlyReportData.reports.forEach(report => {
-      let cumulativeARR = 0;
       report.monthlyData.forEach((monthData, monthIndex) => {
-        cumulativeARR += monthData.arr;
         rows.push([
           report.planType,
           report.segmentGroup,
@@ -582,10 +581,11 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
           monthData.scheduledLaunches,
           monthData.goLiveMerchants,
           Math.round(monthData.shipments),
+          Math.round(monthData.cumulativeShipments),
           Math.round(monthData.realizedRevenue),
           Math.round(monthData.cumulativeRevenue),
           Math.round(monthData.arr),
-          Math.round(cumulativeARR)
+          Math.round(monthData.cumulativeARR)
         ]);
       });
     });
@@ -625,6 +625,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
       'Scheduled Launches',
       'Go-Live Merchants',
       'Shipments',
+      'Cumulative Shipments',
       'Realized Revenue',
       'Cumulative Revenue',
       'ARR Added',
@@ -683,9 +684,11 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
 
           // Output rows with cumulative values
           let cumulativeRevenue = 0;
+          let cumulativeShipments = 0;
           let cumulativeARR = 0;
           monthlyData.forEach((data, monthIndex) => {
             cumulativeRevenue += data.realizedRevenue;
+            cumulativeShipments += data.shipments;
             cumulativeARR += data.arr;
 
             rows.push([
@@ -697,6 +700,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
               data.scheduledLaunches,
               data.goLiveMerchants,
               Math.round(data.shipments),
+              Math.round(cumulativeShipments),
               Math.round(data.realizedRevenue),
               Math.round(cumulativeRevenue),
               Math.round(data.arr),
@@ -2149,9 +2153,11 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                   <th className="px-2 py-2 text-right text-gray-700 font-semibold">Scheduled Launches</th>
                                   <th className="px-2 py-2 text-right text-gray-700 font-semibold">Go-Live Merchants</th>
                                   <th className="px-2 py-2 text-right text-gray-700 font-semibold">Shipments</th>
+                                  <th className="px-2 py-2 text-right text-gray-700 font-semibold">Cumulative Shipments</th>
                                   <th className="px-2 py-2 text-right text-gray-700 font-semibold">Realized Revenue</th>
                                   <th className="px-2 py-2 text-right text-gray-700 font-semibold">Cumulative Revenue</th>
                                   <th className="px-2 py-2 text-right text-gray-700 font-semibold">ARR Added</th>
+                                  <th className="px-2 py-2 text-right text-gray-700 font-semibold">Cumulative ARR</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -2170,6 +2176,9 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                     <td className="px-2 py-2 text-right text-gray-700">
                                       {Math.round(monthData.shipments).toLocaleString()}
                                     </td>
+                                    <td className="px-2 py-2 text-right text-gray-600">
+                                      {Math.round(monthData.cumulativeShipments).toLocaleString()}
+                                    </td>
                                     <td className="px-2 py-2 text-right text-green-900 font-semibold">
                                       ${Math.round(monthData.realizedRevenue).toLocaleString()}
                                     </td>
@@ -2178,6 +2187,9 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                     </td>
                                     <td className="px-2 py-2 text-right text-blue-700">
                                       ${Math.round(monthData.arr).toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-blue-600">
+                                      ${Math.round(monthData.cumulativeARR).toLocaleString()}
                                     </td>
                                   </tr>
                                 ))}
@@ -2216,9 +2228,11 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                   <th className="px-2 py-2 text-right text-orange-800 font-semibold">Scheduled Launches</th>
                                   <th className="px-2 py-2 text-right text-orange-800 font-semibold">Go-Live Merchants</th>
                                   <th className="px-2 py-2 text-right text-orange-800 font-semibold">Shipments</th>
+                                  <th className="px-2 py-2 text-right text-orange-800 font-semibold">Cumulative Shipments</th>
                                   <th className="px-2 py-2 text-right text-orange-800 font-semibold">Realized Revenue</th>
                                   <th className="px-2 py-2 text-right text-orange-800 font-semibold">Cumulative Revenue</th>
                                   <th className="px-2 py-2 text-right text-orange-800 font-semibold">ARR Added</th>
+                                  <th className="px-2 py-2 text-right text-orange-800 font-semibold">Cumulative ARR</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -2237,6 +2251,9 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                     <td className="px-2 py-2 text-right text-orange-800">
                                       {Math.round(monthData.shipments).toLocaleString()}
                                     </td>
+                                    <td className="px-2 py-2 text-right text-orange-700">
+                                      {Math.round(monthData.cumulativeShipments).toLocaleString()}
+                                    </td>
                                     <td className="px-2 py-2 text-right text-green-900 font-semibold">
                                       ${Math.round(monthData.realizedRevenue).toLocaleString()}
                                     </td>
@@ -2245,6 +2262,9 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                                     </td>
                                     <td className="px-2 py-2 text-right text-blue-800">
                                       ${Math.round(monthData.arr).toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-blue-700">
+                                      ${Math.round(monthData.cumulativeARR).toLocaleString()}
                                     </td>
                                   </tr>
                                 ))}

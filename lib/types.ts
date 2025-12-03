@@ -297,6 +297,8 @@ export interface MonthlySegmentGroupMetrics {
   cumulativeRevenue: number;        // Running total through this month
   arr: number;                      // ARR from merchants going live this month
   shipments: number;                // Shipments generated IN this month
+  cumulativeShipments: number;      // Running total of shipments through this month
+  cumulativeARR: number;            // Running total of ARR through this month
 }
 
 // Complete monthly breakdown for one plan × one segment group
