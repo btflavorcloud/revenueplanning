@@ -1550,7 +1550,8 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
           </>
         )}
 
-        {/* Total Metrics */}
+        {/* Total Metrics - Hidden on Funnel tab */}
+        {activeTab !== 'funnel' && (
         <div className="grid grid-cols-3 gap-3 mb-4">
           <div className="bg-gray-50 rounded-lg p-3 border-4 border-blue-700">
             <p className="text-xs font-semibold text-gray-600 mb-1">Total Annual Shipments</p>
@@ -1576,8 +1577,10 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
             <p className="text-xs text-gray-500 mt-1">Full-year potential</p>
           </div>
         </div>
+        )}
 
-        {/* Plan Summary - Consolidated Section */}
+        {/* Plan Summary - Consolidated Section - Hidden on Funnel tab */}
+        {activeTab !== 'funnel' && (
         <div className="bg-blue-50 rounded-lg border-2 border-blue-400">
           <button
             onClick={() => setPlanSummaryOpen(!planSummaryOpen)}
@@ -1816,6 +1819,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Main Content - Conditional Based on Tab */}
