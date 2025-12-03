@@ -277,6 +277,41 @@ export interface FunnelCalculations {
   totalMerchants: number;
 }
 
+// Segment grouping types for monthly reporting
+export type SegmentGroup = 'SMB' | 'Mid-Market' | 'Enterprise';
+
+export const SEGMENT_GROUP_MAPPING: Record<SegmentType, SegmentGroup> = {
+  SMB: 'SMB',
+  MM: 'Mid-Market',
+  ENT: 'Enterprise',
+  'ENT+': 'Enterprise',
+  Flagship: 'Enterprise',
+};
+
+// Monthly metrics for a single segment group in a single plan
+export interface MonthlySegmentGroupMetrics {
+  scheduledLaunches: number;        // Raw input launches for that month
+  goLiveMerchants: number;          // After integration delay applied
+  topOfFunnel: number;              // Opportunities needed
+  realizedRevenue: number;          // Revenue generated IN this month
+  cumulativeRevenue: number;        // Running total through this month
+  arr: number;                      // ARR from merchants going live this month
+  shipments: number;                // Shipments generated IN this month
+}
+
+// Complete monthly breakdown for one plan × one segment group
+export interface PlanSegmentGroupMonthly {
+  planId: string;
+  planType: 'Baseline' | 'Stretch';
+  segmentGroup: SegmentGroup;
+  monthlyData: MonthlySegmentGroupMetrics[];  // Array of 12 months
+}
+
+// Complete monthly report data
+export interface MonthlyReportData {
+  reports: PlanSegmentGroupMonthly[];  // Baseline×SMB, Baseline×MM, Baseline×ENT, Stretch×SMB, etc.
+}
+
 // Constants as types for better type safety
 export const SEGMENT_CONFIGS: Record<SegmentType, SegmentConfig> = {
   SMB: { label: 'SMB', defaultSPM: 100, color: 'bg-yellow-400', borderColor: 'border-yellow-500', textColor: 'text-yellow-700' },

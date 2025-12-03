@@ -8,6 +8,11 @@ import {
   SeasonalitySettings,
   IntegrationTimelineSettings,
   SegmentType,
+  MonthlyReportData,
+  SegmentGroup,
+  SEGMENT_GROUP_MAPPING,
+  PlanSegmentGroupMonthly,
+  MonthlySegmentGroupMetrics,
 } from './types';
 
 const FIRST_MONTH_RAMP_FACTOR = 0.5;
@@ -276,6 +281,122 @@ export function calculateFunnelMetrics(
     totalOpps,
     totalMerchants
   };
+}
+
+export function calculateMonthlyReportData(
+  scenario: ScenarioWithData,
+  rps: number,
+  conversionRates: Record<string, { oppToClose: number; avgDaysToClose: number }>,
+  seasonalitySettings: SeasonalitySettings,
+  integrationTimelineSettings: IntegrationTimelineSettings
+): MonthlyReportData {
+  const reports: PlanSegmentGroupMonthly[] = [];
+
+  scenario.plans.forEach(plan => {
+    // Initialize data structure for each segment group
+    const segmentGroupData: Record<SegmentGroup, MonthlySegmentGroupMetrics[]> = {
+      'SMB': Array(12).fill(null).map(() => ({
+        scheduledLaunches: 0,
+        goLiveMerchants: 0,
+        topOfFunnel: 0,
+        realizedRevenue: 0,
+        cumulativeRevenue: 0,
+        arr: 0,
+        shipments: 0,
+      })),
+      'Mid-Market': Array(12).fill(null).map(() => ({
+        scheduledLaunches: 0,
+        goLiveMerchants: 0,
+        topOfFunnel: 0,
+        realizedRevenue: 0,
+        cumulativeRevenue: 0,
+        arr: 0,
+        shipments: 0,
+      })),
+      'Enterprise': Array(12).fill(null).map(() => ({
+        scheduledLaunches: 0,
+        goLiveMerchants: 0,
+        topOfFunnel: 0,
+        realizedRevenue: 0,
+        cumulativeRevenue: 0,
+        arr: 0,
+        shipments: 0,
+      })),
+    };
+
+    // Process each segment
+    plan.gtm_groups.forEach(gtmGroup => {
+      gtmGroup.segments.forEach(segment => {
+        const segmentGroup = SEGMENT_GROUP_MAPPING[segment.segment_type];
+        const rates = conversionRates[segment.segment_type];
+        const integrationMonths = getIntegrationMonths(segment.segment_type, integrationTimelineSettings);
+        const annualSeasonalityFactor = getAnnualSeasonalityFactor(segment.segment_type, seasonalitySettings);
+
+        // Process each launch month
+        segment.launches.forEach((launchCount, launchMonth) => {
+          if (launchCount === 0) return;
+
+          // 1. Scheduled launches (input value)
+          segmentGroupData[segmentGroup][launchMonth].scheduledLaunches += launchCount;
+
+          // 2. Go-live merchants (after integration delay)
+          const goLiveMonth = launchMonth + integrationMonths;
+
+          if (goLiveMonth < 12) {
+            segmentGroupData[segmentGroup][goLiveMonth].goLiveMerchants += launchCount;
+
+            // 3. Calculate monthly shipments and revenue
+            const baseMonthlyShipments = launchCount * segment.spm;
+
+            for (let currentMonth = goLiveMonth; currentMonth < 12; currentMonth++) {
+              const rampFactor = currentMonth === goLiveMonth ? FIRST_MONTH_RAMP_FACTOR : 1;
+              const seasonalMultiplier = getSeasonalMultiplier(segment.segment_type, currentMonth, seasonalitySettings);
+              const shipmentsThisMonth = baseMonthlyShipments * rampFactor * seasonalMultiplier;
+              const revenueThisMonth = shipmentsThisMonth * rps;
+
+              segmentGroupData[segmentGroup][currentMonth].shipments += shipmentsThisMonth;
+              segmentGroupData[segmentGroup][currentMonth].realizedRevenue += revenueThisMonth;
+            }
+
+            // 4. ARR from this go-live
+            const arr = baseMonthlyShipments * rps * annualSeasonalityFactor;
+            segmentGroupData[segmentGroup][goLiveMonth].arr += arr;
+          }
+
+          // 5. Top of funnel (opportunities needed)
+          if (rates) {
+            const monthsBack = Math.max(0, Math.round(rates.avgDaysToClose / 30));
+            const closeMonth = Math.max(0, launchMonth - integrationMonths);
+            const oppCreationMonth = Math.max(0, closeMonth - monthsBack);
+            const oppsNeeded = Math.ceil(launchCount / (rates.oppToClose / 100));
+
+            if (oppCreationMonth < 12) {
+              segmentGroupData[segmentGroup][oppCreationMonth].topOfFunnel += oppsNeeded;
+            }
+          }
+        });
+      });
+    });
+
+    // Calculate cumulative revenue for each segment group
+    (['SMB', 'Mid-Market', 'Enterprise'] as SegmentGroup[]).forEach(segmentGroup => {
+      let cumulative = 0;
+      segmentGroupData[segmentGroup].forEach(monthData => {
+        cumulative += monthData.realizedRevenue;
+        monthData.cumulativeRevenue = cumulative;
+      });
+
+      // Add to reports
+      reports.push({
+        planId: plan.id,
+        planType: plan.type,
+        segmentGroup,
+        monthlyData: segmentGroupData[segmentGroup],
+      });
+    });
+  });
+
+  return { reports };
 }
 
 // Debounce utility for auto-save

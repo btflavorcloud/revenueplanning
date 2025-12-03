@@ -18,7 +18,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { useScenarios } from '@/lib/hooks/useScenarios';
-import { calculateMetrics, calculateFunnelMetrics, debounce } from '@/lib/utils';
+import { calculateMetrics, calculateFunnelMetrics, calculateMonthlyReportData, debounce } from '@/lib/utils';
 import {
   ScenarioWithData,
   MONTHS,
@@ -31,6 +31,8 @@ import {
   QUARTER_KEYS,
   QuarterBreakdown,
   QUARTERS,
+  SegmentGroup,
+  SEGMENT_GROUP_MAPPING,
 } from '@/lib/types';
 
 interface RevenuePlannerProps {
@@ -126,10 +128,10 @@ interface PlanQuarterMetrics {
 }
 
 const FIRST_MONTH_RAMP = 0.5;
-type FunnelSectionKey = 'aggregate' | 'quarterlySegments' | 'tactical';
+type FunnelSectionKey = 'aggregate' | 'quarterlySegments' | 'monthly' | 'tactical';
 
 export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
-  const [activeTab, setActiveTab] = useState<'output' | 'funnel' | 'visual' | 'settings'>('output');
+  const [activeTab, setActiveTab] = useState<'output' | 'funnel' | 'visual' | 'monthly' | 'settings'>('output');
   const [conversionRates, setConversionRates] = useState({
     SMB: { oppToClose: 25, avgDaysToClose: 60 },
     MM: { oppToClose: 20, avgDaysToClose: 90 },
@@ -154,11 +156,13 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
   const [funnelSectionsOpen, setFunnelSectionsOpen] = useState<Record<FunnelSectionKey, boolean>>({
     aggregate: true,
     quarterlySegments: true,
+    monthly: true,
     tactical: true,
   });
   const [planSummariesOpen, setPlanSummariesOpen] = useState({
     baseline: true,
     stretch: true,
+    monthly: false,
   });
 
   const scenario = useMemo(() => {
@@ -370,6 +374,34 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
     );
   }, [scenario, conversionRates, localLaunches, localSPM, localSettings]);
 
+  const monthlyReportData = useMemo(() => {
+    if (!scenario) return null;
+
+    // Use local launches and SPM for instant calculations
+    const tempScenario = {
+      ...scenario,
+      plans: scenario.plans.map(plan => ({
+        ...plan,
+        gtm_groups: plan.gtm_groups.map(gtm => ({
+          ...gtm,
+          segments: gtm.segments.map(seg => ({
+            ...seg,
+            launches: localLaunches[seg.id] || seg.launches,
+            spm: localSPM[seg.id] ?? seg.spm,
+          })),
+        })),
+      })),
+    };
+
+    return calculateMonthlyReportData(
+      tempScenario,
+      localRps,
+      conversionRates,
+      localSettings.seasonality,
+      localSettings.integrationTimelineDays
+    );
+  }, [scenario, localRps, conversionRates, localLaunches, localSPM, localSettings]);
+
   const segmentQuarterlyBreakdown = useMemo(() => {
     if (!scenario || !funnelCalculations) return null;
     const base = {} as Record<SegmentType, { opps: QuarterBreakdown; merchants: QuarterBreakdown }>;
@@ -517,34 +549,59 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
   }, [scenario, localLaunches, localSPM, localSettings, localRps]);
 
   const exportToCSV = () => {
-    if (!scenario || !calculations) return;
+    if (!scenario || !calculations || !monthlyReportData) return;
 
     const rows = [];
-    rows.push(['Plan', 'GTM Motion', 'Segment', 'SPM', ...MONTHS, 'Total Shipments', 'Realized Revenue', 'ARR']);
 
-    scenario.plans.forEach(plan => {
-      plan.gtm_groups.forEach(gtmGroup => {
-        gtmGroup.segments.forEach((seg, idx) => {
-          rows.push([
-            idx === 0 ? `${plan.type}` : '',
-            idx === 0 ? gtmGroup.name : '',
-            seg.segment_type,
-            seg.spm,
-            ...seg.launches,
-            calculations.segmentTotals[seg.id] || 0,
-            `$${(calculations.segmentRevenueBreakdown[seg.id]?.realized || 0).toLocaleString()}`,
-            `$${(calculations.segmentRevenueBreakdown[seg.id]?.arr || 0).toLocaleString()}`
-          ]);
-        });
+    // Header row
+    rows.push([
+      'Plan',
+      'Segment Group',
+      'Month',
+      'Top of Funnel',
+      'Scheduled Launches',
+      'Go-Live Merchants',
+      'Shipments',
+      'Realized Revenue',
+      'Cumulative Revenue',
+      'ARR Added'
+    ]);
+
+    // Data rows - long format
+    monthlyReportData.reports.forEach(report => {
+      report.monthlyData.forEach((monthData, monthIndex) => {
+        rows.push([
+          report.planType,
+          report.segmentGroup,
+          MONTHS[monthIndex],
+          monthData.topOfFunnel,
+          monthData.scheduledLaunches,
+          monthData.goLiveMerchants,
+          Math.round(monthData.shipments),
+          Math.round(monthData.realizedRevenue),
+          Math.round(monthData.cumulativeRevenue),
+          Math.round(monthData.arr)
+        ]);
       });
     });
 
-    const csvContent = rows.map(row => row.join(',')).join('\n');
+    // Generate CSV with proper escaping
+    const csvContent = rows.map(row =>
+      row.map(cell => {
+        // Convert to string and escape if needed
+        const cellStr = String(cell);
+        if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+          return `"${cellStr.replace(/"/g, '""')}"`;
+        }
+        return cellStr;
+      }).join(',')
+    ).join('\n');
+
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `gtm-revenue-plan-${scenario.name}-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `gtm-monthly-report-${scenario.name}-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
   };
@@ -1042,6 +1099,19 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
             </div>
           </button>
           <button
+            onClick={() => setActiveTab('monthly')}
+            className={`px-6 py-2 rounded-lg font-semibold transition-colors ${
+              activeTab === 'monthly'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <DollarSign className="w-4 h-4" />
+              <span>Monthly Report</span>
+            </div>
+          </button>
+          <button
             onClick={() => setActiveTab('settings')}
             className={`px-6 py-2 rounded-lg font-semibold transition-colors ${
               activeTab === 'settings'
@@ -1159,6 +1229,78 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Monthly Breakdown Section */}
+            {monthlyReportData && (
+              <div className="mb-4 bg-white rounded-lg p-4 border-2 border-purple-200">
+                <button
+                  onClick={() => toggleFunnelSection('monthly')}
+                  className="w-full flex items-center justify-between text-purple-900 font-bold text-sm"
+                >
+                  <span>Monthly Top of Funnel & Launches</span>
+                  {funnelSectionsOpen.monthly ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                </button>
+                {funnelSectionsOpen.monthly && (
+                  <div className="space-y-4 mt-3">
+                    {(['SMB', 'Mid-Market', 'Enterprise'] as SegmentGroup[]).map(segmentGroup => {
+                      const baselineReport = monthlyReportData.reports.find(
+                        r => r.planType === 'Baseline' && r.segmentGroup === segmentGroup
+                      );
+                      const stretchReport = monthlyReportData.reports.find(
+                        r => r.planType === 'Stretch' && r.segmentGroup === segmentGroup
+                      );
+
+                      return (
+                        <div key={segmentGroup} className="border border-purple-200 rounded-lg p-3 bg-purple-50">
+                          <h5 className="text-sm font-bold text-purple-900 mb-3">{segmentGroup}</h5>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs border border-purple-200 rounded-lg overflow-hidden">
+                              <thead>
+                                <tr className="bg-purple-100">
+                                  <th className="px-2 py-1 text-left text-purple-900 font-semibold border-r border-purple-200">Month</th>
+                                  <th className="px-2 py-1 text-center text-purple-900 font-semibold border-r border-purple-200" colSpan={2}>
+                                    Baseline
+                                  </th>
+                                  <th className="px-2 py-1 text-center text-orange-900 font-semibold" colSpan={2}>
+                                    Stretch
+                                  </th>
+                                </tr>
+                                <tr className="bg-purple-50">
+                                  <th className="px-2 py-1 text-left text-purple-800 font-semibold border-r border-purple-200"></th>
+                                  <th className="px-2 py-1 text-right text-purple-800 font-semibold text-[10px]">Top of Funnel</th>
+                                  <th className="px-2 py-1 text-right text-purple-800 font-semibold text-[10px] border-r border-purple-200">Launches</th>
+                                  <th className="px-2 py-1 text-right text-orange-800 font-semibold text-[10px]">Top of Funnel</th>
+                                  <th className="px-2 py-1 text-right text-orange-800 font-semibold text-[10px]">Launches</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {MONTHS.map((month, monthIndex) => (
+                                  <tr key={monthIndex} className="border-t border-purple-100">
+                                    <td className="px-2 py-1 font-semibold text-gray-700 border-r border-purple-200">{month}</td>
+                                    <td className="px-2 py-1 text-right text-purple-900">
+                                      {baselineReport?.monthlyData[monthIndex].topOfFunnel.toLocaleString() || 0}
+                                    </td>
+                                    <td className="px-2 py-1 text-right text-gray-900 border-r border-purple-200">
+                                      {baselineReport?.monthlyData[monthIndex].scheduledLaunches.toLocaleString() || 0}
+                                    </td>
+                                    <td className="px-2 py-1 text-right text-orange-900">
+                                      {stretchReport?.monthlyData[monthIndex].topOfFunnel.toLocaleString() || 0}
+                                    </td>
+                                    <td className="px-2 py-1 text-right text-orange-900">
+                                      {stretchReport?.monthlyData[monthIndex].scheduledLaunches.toLocaleString() || 0}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1405,6 +1547,88 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
             )}
           </div>
         </div>
+
+        {/* Monthly Summary Expandable */}
+        {monthlyReportData && (
+          <div className="mt-4 bg-blue-50 rounded-lg border-2 border-blue-400">
+            <button
+              onClick={() => setPlanSummariesOpen(prev => ({ ...prev, monthly: !prev.monthly }))}
+              className="w-full flex items-center justify-between px-3 py-2"
+            >
+              <p className="text-sm font-bold text-blue-900">Monthly Breakdown Summary</p>
+              {planSummariesOpen.monthly ? <ChevronDown className="w-4 h-4 text-blue-700" /> : <ChevronRight className="w-4 h-4 text-blue-700" />}
+            </button>
+            {planSummariesOpen.monthly && (
+              <div className="p-3">
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Baseline Column */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">Baseline</p>
+                    {(['SMB', 'Mid-Market', 'Enterprise'] as SegmentGroup[]).map(segmentGroup => {
+                      const report = monthlyReportData.reports.find(
+                        r => r.planType === 'Baseline' && r.segmentGroup === segmentGroup
+                      );
+                      if (!report) return null;
+
+                      const lastMonth = report.monthlyData[11];
+                      return (
+                        <div key={segmentGroup} className="bg-white rounded border border-gray-300 p-2">
+                          <p className="text-xs font-semibold text-gray-900 mb-1">{segmentGroup}</p>
+                          <div className="grid grid-cols-2 gap-1 text-[10px]">
+                            <div>
+                              <span className="text-gray-600">Year 1 Revenue:</span>
+                              <span className="font-bold text-green-900 ml-1">
+                                ${Math.round(lastMonth.cumulativeRevenue).toLocaleString()}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">Total ARR:</span>
+                              <span className="font-bold text-blue-900 ml-1">
+                                ${Math.round(report.monthlyData.reduce((sum, m) => sum + m.arr, 0)).toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Stretch Column */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-bold text-orange-700 uppercase tracking-wide">Stretch</p>
+                    {(['SMB', 'Mid-Market', 'Enterprise'] as SegmentGroup[]).map(segmentGroup => {
+                      const report = monthlyReportData.reports.find(
+                        r => r.planType === 'Stretch' && r.segmentGroup === segmentGroup
+                      );
+                      if (!report) return null;
+
+                      const lastMonth = report.monthlyData[11];
+                      return (
+                        <div key={segmentGroup} className="bg-orange-50 rounded border border-orange-300 p-2">
+                          <p className="text-xs font-semibold text-orange-900 mb-1">{segmentGroup}</p>
+                          <div className="grid grid-cols-2 gap-1 text-[10px]">
+                            <div>
+                              <span className="text-orange-700">Year 1 Revenue:</span>
+                              <span className="font-bold text-green-900 ml-1">
+                                ${Math.round(lastMonth.cumulativeRevenue).toLocaleString()}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-orange-700">Total ARR:</span>
+                              <span className="font-bold text-blue-900 ml-1">
+                                ${Math.round(report.monthlyData.reduce((sum, m) => sum + m.arr, 0)).toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Main Content - Conditional Based on Tab */}
@@ -1666,6 +1890,150 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                 Peak season multipliers apply on top of that ramp, so high-performing segments can capture seasonal upside automatically.
               </p>
             </div>
+          </div>
+        </div>
+      ) : activeTab === 'monthly' ? (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="bg-white rounded-lg shadow border border-gray-200 p-6">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">Monthly Revenue Report</h3>
+
+            {monthlyReportData && (
+              <div className="space-y-8">
+                {/* Baseline Plan */}
+                <div className="border-2 border-gray-400 rounded-lg overflow-hidden">
+                  <div className="bg-gray-200 px-4 py-3 border-b-2 border-gray-400">
+                    <h4 className="text-md font-bold text-gray-900">Baseline Plan</h4>
+                  </div>
+                  <div className="p-4 space-y-6">
+                    {(['SMB', 'Mid-Market', 'Enterprise'] as SegmentGroup[]).map(segmentGroup => {
+                      const report = monthlyReportData.reports.find(
+                        r => r.planType === 'Baseline' && r.segmentGroup === segmentGroup
+                      );
+                      if (!report) return null;
+
+                      return (
+                        <div key={segmentGroup} className="border border-gray-300 rounded-lg overflow-hidden">
+                          <div className="bg-blue-50 px-3 py-2 border-b border-gray-300">
+                            <h5 className="text-sm font-bold text-blue-900">{segmentGroup}</h5>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="bg-gray-100 border-b border-gray-300">
+                                  <th className="px-2 py-2 text-left text-gray-700 font-semibold">Month</th>
+                                  <th className="px-2 py-2 text-right text-gray-700 font-semibold">Top of Funnel</th>
+                                  <th className="px-2 py-2 text-right text-gray-700 font-semibold">Scheduled Launches</th>
+                                  <th className="px-2 py-2 text-right text-gray-700 font-semibold">Go-Live Merchants</th>
+                                  <th className="px-2 py-2 text-right text-gray-700 font-semibold">Shipments</th>
+                                  <th className="px-2 py-2 text-right text-gray-700 font-semibold">Realized Revenue</th>
+                                  <th className="px-2 py-2 text-right text-gray-700 font-semibold">Cumulative Revenue</th>
+                                  <th className="px-2 py-2 text-right text-gray-700 font-semibold">ARR Added</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {report.monthlyData.map((monthData, monthIndex) => (
+                                  <tr key={monthIndex} className="border-b border-gray-200 hover:bg-gray-50">
+                                    <td className="px-2 py-2 font-semibold text-gray-900">{MONTHS[monthIndex]}</td>
+                                    <td className="px-2 py-2 text-right text-purple-900">
+                                      {monthData.topOfFunnel.toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-gray-900">
+                                      {monthData.scheduledLaunches.toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-blue-900 font-semibold">
+                                      {monthData.goLiveMerchants.toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-gray-700">
+                                      {Math.round(monthData.shipments).toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-green-900 font-semibold">
+                                      ${Math.round(monthData.realizedRevenue).toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-green-700">
+                                      ${Math.round(monthData.cumulativeRevenue).toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-blue-700">
+                                      ${Math.round(monthData.arr).toLocaleString()}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Stretch Plan */}
+                <div className="border-2 border-orange-400 rounded-lg overflow-hidden">
+                  <div className="bg-orange-100 px-4 py-3 border-b-2 border-orange-400">
+                    <h4 className="text-md font-bold text-orange-900">Stretch Plan</h4>
+                  </div>
+                  <div className="p-4 space-y-6">
+                    {(['SMB', 'Mid-Market', 'Enterprise'] as SegmentGroup[]).map(segmentGroup => {
+                      const report = monthlyReportData.reports.find(
+                        r => r.planType === 'Stretch' && r.segmentGroup === segmentGroup
+                      );
+                      if (!report) return null;
+
+                      return (
+                        <div key={segmentGroup} className="border border-orange-300 rounded-lg overflow-hidden">
+                          <div className="bg-orange-50 px-3 py-2 border-b border-orange-300">
+                            <h5 className="text-sm font-bold text-orange-900">{segmentGroup}</h5>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="bg-orange-50 border-b border-orange-300">
+                                  <th className="px-2 py-2 text-left text-orange-800 font-semibold">Month</th>
+                                  <th className="px-2 py-2 text-right text-orange-800 font-semibold">Top of Funnel</th>
+                                  <th className="px-2 py-2 text-right text-orange-800 font-semibold">Scheduled Launches</th>
+                                  <th className="px-2 py-2 text-right text-orange-800 font-semibold">Go-Live Merchants</th>
+                                  <th className="px-2 py-2 text-right text-orange-800 font-semibold">Shipments</th>
+                                  <th className="px-2 py-2 text-right text-orange-800 font-semibold">Realized Revenue</th>
+                                  <th className="px-2 py-2 text-right text-orange-800 font-semibold">Cumulative Revenue</th>
+                                  <th className="px-2 py-2 text-right text-orange-800 font-semibold">ARR Added</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {report.monthlyData.map((monthData, monthIndex) => (
+                                  <tr key={monthIndex} className="border-b border-orange-200 hover:bg-orange-50">
+                                    <td className="px-2 py-2 font-semibold text-orange-900">{MONTHS[monthIndex]}</td>
+                                    <td className="px-2 py-2 text-right text-purple-900">
+                                      {monthData.topOfFunnel.toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-orange-900">
+                                      {monthData.scheduledLaunches.toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-orange-900 font-semibold">
+                                      {monthData.goLiveMerchants.toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-orange-800">
+                                      {Math.round(monthData.shipments).toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-green-900 font-semibold">
+                                      ${Math.round(monthData.realizedRevenue).toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-green-800">
+                                      ${Math.round(monthData.cumulativeRevenue).toLocaleString()}
+                                    </td>
+                                    <td className="px-2 py-2 text-right text-blue-800">
+                                      ${Math.round(monthData.arr).toLocaleString()}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : (
