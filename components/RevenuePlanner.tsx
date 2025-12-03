@@ -1684,7 +1684,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
               onClick={() => setPlanSummariesOpen(prev => ({ ...prev, monthly: !prev.monthly }))}
               className="w-full flex items-center justify-between px-3 py-2"
             >
-              <p className="text-sm font-bold text-blue-900">Segment Group Summary</p>
+              <p className="text-sm font-bold text-blue-900">Segment Summary</p>
               {planSummariesOpen.monthly ? <ChevronDown className="w-4 h-4 text-blue-700" /> : <ChevronRight className="w-4 h-4 text-blue-700" />}
             </button>
             {planSummariesOpen.monthly && (
@@ -1700,10 +1700,26 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                       if (!report) return null;
 
                       const lastMonth = report.monthlyData[11];
+                      const totalShipments = report.monthlyData.reduce((sum, m) => sum + m.shipments, 0);
+                      const totalMerchants = report.monthlyData.reduce((sum, m) => sum + m.goLiveMerchants, 0);
+                      const totalARR = report.monthlyData.reduce((sum, m) => sum + m.arr, 0);
+
                       return (
                         <div key={segmentGroup} className="bg-white rounded border border-gray-300 p-2">
                           <p className="text-xs font-semibold text-gray-900 mb-1">{segmentGroup}</p>
                           <div className="grid grid-cols-2 gap-1 text-[10px]">
+                            <div>
+                              <span className="text-gray-600">Total Merchants:</span>
+                              <span className="font-bold text-gray-900 ml-1">
+                                {totalMerchants.toLocaleString()}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">Total Shipments:</span>
+                              <span className="font-bold text-gray-900 ml-1">
+                                {Math.round(totalShipments).toLocaleString()}
+                              </span>
+                            </div>
                             <div>
                               <span className="text-gray-600">Year 1 Revenue:</span>
                               <span className="font-bold text-green-900 ml-1">
@@ -1713,7 +1729,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                             <div>
                               <span className="text-gray-600">Total ARR:</span>
                               <span className="font-bold text-blue-900 ml-1">
-                                ${Math.round(report.monthlyData.reduce((sum, m) => sum + m.arr, 0)).toLocaleString()}
+                                ${Math.round(totalARR).toLocaleString()}
                               </span>
                             </div>
                           </div>
@@ -1732,10 +1748,26 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                       if (!report) return null;
 
                       const lastMonth = report.monthlyData[11];
+                      const totalShipments = report.monthlyData.reduce((sum, m) => sum + m.shipments, 0);
+                      const totalMerchants = report.monthlyData.reduce((sum, m) => sum + m.goLiveMerchants, 0);
+                      const totalARR = report.monthlyData.reduce((sum, m) => sum + m.arr, 0);
+
                       return (
                         <div key={segmentGroup} className="bg-orange-50 rounded border border-orange-300 p-2">
                           <p className="text-xs font-semibold text-orange-900 mb-1">{segmentGroup}</p>
                           <div className="grid grid-cols-2 gap-1 text-[10px]">
+                            <div>
+                              <span className="text-orange-700">Total Merchants:</span>
+                              <span className="font-bold text-orange-900 ml-1">
+                                {totalMerchants.toLocaleString()}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-orange-700">Total Shipments:</span>
+                              <span className="font-bold text-orange-900 ml-1">
+                                {Math.round(totalShipments).toLocaleString()}
+                              </span>
+                            </div>
                             <div>
                               <span className="text-orange-700">Year 1 Revenue:</span>
                               <span className="font-bold text-green-900 ml-1">
@@ -1745,7 +1777,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                             <div>
                               <span className="text-orange-700">Total ARR:</span>
                               <span className="font-bold text-blue-900 ml-1">
-                                ${Math.round(report.monthlyData.reduce((sum, m) => sum + m.arr, 0)).toLocaleString()}
+                                ${Math.round(totalARR).toLocaleString()}
                               </span>
                             </div>
                           </div>
