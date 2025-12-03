@@ -754,16 +754,24 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
   const renderPlan = (plan: PlanWithGtmGroups | undefined, planType: 'Baseline' | 'Stretch') => {
     if (!plan) return null;
 
+    const planKey = planType.toLowerCase() as 'baseline' | 'stretch';
+    const isOpen = planSummariesOpen[planKey];
     const planColors = planType === 'Baseline'
-      ? { headerBg: 'bg-gray-200', headerText: 'text-gray-900' }
-      : { headerBg: 'bg-orange-100', headerText: 'text-orange-900' };
+      ? { headerBg: 'bg-gray-200', headerText: 'text-gray-900', chevronColor: 'text-gray-700' }
+      : { headerBg: 'bg-orange-100', headerText: 'text-orange-900', chevronColor: 'text-orange-700' };
 
     return (
       <div className="mb-6">
-        {/* Plan Header */}
-        <div className={`${planColors.headerBg} p-4 rounded-t-lg border-2 border-gray-400`}>
+        {/* Plan Header - Collapsible */}
+        <button
+          onClick={() => togglePlanSummary(planKey)}
+          className={`${planColors.headerBg} p-4 rounded-t-lg border-2 border-gray-400 w-full`}
+        >
           <div className="flex items-center justify-between">
-            <h3 className="text-xl font-bold ${planColors.headerText}">{planType} Plan</h3>
+            <div className="flex items-center gap-2">
+              <h3 className={`text-xl font-bold ${planColors.headerText}`}>{planType} Plan</h3>
+              {isOpen ? <ChevronDown className={`w-5 h-5 ${planColors.chevronColor}`} /> : <ChevronRight className={`w-5 h-5 ${planColors.chevronColor}`} />}
+            </div>
             <div className="flex items-center gap-4 text-sm">
               <div className="text-right">
                 <span className="text-gray-600">Shipments: </span>
@@ -779,9 +787,10 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
               </div>
             </div>
           </div>
-        </div>
+        </button>
 
         {/* GTM Groups */}
+        {isOpen && (
         <div className="border-2 border-t-0 border-gray-400 rounded-b-lg bg-white">
           {plan.gtm_groups.length === 0 ? (
             <div className="p-8 text-center text-gray-500">
@@ -1072,6 +1081,7 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
             </div>
           )}
         </div>
+        )}
       </div>
     );
   };
