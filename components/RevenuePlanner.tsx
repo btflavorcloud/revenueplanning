@@ -1251,46 +1251,50 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               onClick={() => refresh()}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+              className="p-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 hover:border-gray-400 transition-colors"
               title="Refresh data"
             >
               <RefreshCw className="w-4 h-4" />
-              Refresh
             </button>
+
+            <div className="w-px h-6 bg-gray-300 mx-1"></div>
+
             <button
               onClick={handleSaveVersion}
-              className="flex items-center gap-2 px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-800 transition-colors text-sm"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 hover:border-gray-400 transition-colors text-xs font-medium"
               title="Save current state as named version"
             >
-              <Save className="w-4 h-4" />
-              Save Version
+              <Save className="w-3.5 h-3.5" />
+              Save
             </button>
             <button
               onClick={() => setVersionHistoryOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition-colors text-sm"
+              className="p-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 hover:border-gray-400 transition-colors"
               title="View version history"
             >
               <History className="w-4 h-4" />
-              History
             </button>
+
+            <div className="w-px h-6 bg-gray-300 mx-1"></div>
+
             <button
               onClick={exportSummaryCSV}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition-colors text-sm"
-              title="Export aggregated summary by segment group"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 hover:border-gray-400 transition-colors text-xs font-medium"
+              title="Export summary (aggregated by segment group)"
             >
-              <Download className="w-4 h-4" />
-              Export Summary
+              <Download className="w-3.5 h-3.5" />
+              Summary
             </button>
             <button
               onClick={exportDetailedCSV}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white rounded-lg hover:bg-blue-800 transition-colors text-sm"
-              title="Export detailed breakdown by GTM motion and segment"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 hover:border-gray-400 transition-colors text-xs font-medium"
+              title="Export detailed (by GTM motion and segment)"
             >
-              <Download className="w-4 h-4" />
-              Export Detailed
+              <Download className="w-3.5 h-3.5" />
+              Detailed
             </button>
           </div>
         </div>
