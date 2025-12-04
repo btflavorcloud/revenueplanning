@@ -585,6 +585,245 @@ export function useScenarios() {
     }
   };
 
+  const createVersion = async (
+    scenarioId: string,
+    versionName?: string,
+    isAutoSnapshot: boolean = false
+  ): Promise<void> => {
+    try {
+      // 1. Fetch full scenario data with all nested relations
+      const { data: scenario, error: fetchError } = await supabase
+        .from('scenarios')
+        .select(`
+          *,
+          plans (
+            *,
+            gtm_groups (
+              *,
+              segments (*),
+              gtm_execution_plans (*)
+            )
+          )
+        `)
+        .eq('id', scenarioId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      // 2. Structure the snapshot data (remove IDs, keep data)
+      const snapshotData = {
+        scenario: {
+          name: scenario.name,
+          type: scenario.type,
+          target_shipments: scenario.target_shipments,
+          rps: scenario.rps,
+          settings: scenario.settings,
+        },
+        plans: (scenario as any).plans.map((plan: any) => ({
+          type: plan.type,
+          collapsed: plan.collapsed,
+          gtm_groups: plan.gtm_groups.map((gtm: any) => ({
+            name: gtm.name,
+            type: gtm.type,
+            collapsed: gtm.collapsed,
+            sort_order: gtm.sort_order,
+            segments: gtm.segments.map((seg: any) => ({
+              segment_type: seg.segment_type,
+              spm: seg.spm,
+              launches: seg.launches,
+            })),
+            execution_plan: gtm.gtm_execution_plans?.[0] || null,
+          })),
+        })),
+      };
+
+      // 3. Insert version
+      const { error: insertError } = await supabase
+        .from('scenario_versions')
+        .insert({
+          scenario_id: scenarioId,
+          version_name: versionName,
+          is_auto_snapshot: isAutoSnapshot,
+          snapshot_data: snapshotData,
+        });
+
+      if (insertError) throw insertError;
+
+      // 4. Update last_auto_snapshot_at if auto-snapshot
+      if (isAutoSnapshot) {
+        await supabase
+          .from('scenarios')
+          .update({ last_auto_snapshot_at: new Date().toISOString() })
+          .eq('id', scenarioId);
+      }
+
+      // 5. Cleanup old versions (keep last 30)
+      const { data: versions } = await supabase
+        .from('scenario_versions')
+        .select('id')
+        .eq('scenario_id', scenarioId)
+        .order('created_at', { ascending: false })
+        .range(30, 1000);
+
+      if (versions && versions.length > 0) {
+        await supabase
+          .from('scenario_versions')
+          .delete()
+          .in('id', versions.map(v => v.id));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create version');
+      throw err;
+    }
+  };
+
+  const checkDailySnapshot = async (scenarioId: string): Promise<void> => {
+    try {
+      const { data: scenario } = await supabase
+        .from('scenarios')
+        .select('last_auto_snapshot_at')
+        .eq('id', scenarioId)
+        .single();
+
+      if (!scenario) return;
+
+      const lastSnapshot = scenario.last_auto_snapshot_at
+        ? new Date(scenario.last_auto_snapshot_at)
+        : null;
+
+      const now = new Date();
+      const daysSinceSnapshot = lastSnapshot
+        ? (now.getTime() - lastSnapshot.getTime()) / (1000 * 60 * 60 * 24)
+        : 999;
+
+      // If more than 24 hours, create auto-snapshot
+      if (daysSinceSnapshot >= 1) {
+        await createVersion(scenarioId, undefined, true);
+      }
+    } catch (err) {
+      // Silent fail for auto-snapshots
+      console.error('Daily snapshot failed:', err);
+    }
+  };
+
+  const fetchVersions = async (scenarioId: string) => {
+    const { data, error } = await supabase
+      .from('scenario_versions')
+      .select('id, version_name, is_auto_snapshot, created_at')
+      .eq('scenario_id', scenarioId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return data || [];
+  };
+
+  const restoreVersion = async (versionId: string, scenarioId: string): Promise<void> => {
+    try {
+      setSaving(true);
+
+      // 1. Fetch the version snapshot
+      const { data: version, error: versionError } = await supabase
+        .from('scenario_versions')
+        .select('snapshot_data')
+        .eq('id', versionId)
+        .single();
+
+      if (versionError) throw versionError;
+
+      const snapshot = version.snapshot_data as any;
+
+      // 2. Delete existing plans (CASCADE will handle gtm_groups and segments)
+      await supabase
+        .from('plans')
+        .delete()
+        .eq('scenario_id', scenarioId);
+
+      // 3. Update scenario metadata
+      await supabase
+        .from('scenarios')
+        .update({
+          name: snapshot.scenario.name,
+          type: snapshot.scenario.type,
+          target_shipments: snapshot.scenario.target_shipments,
+          rps: snapshot.scenario.rps,
+          settings: snapshot.scenario.settings,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', scenarioId);
+
+      // 4. Recreate plans, gtm_groups, segments
+      for (const planData of snapshot.plans) {
+        const { data: newPlan } = await supabase
+          .from('plans')
+          .insert({
+            scenario_id: scenarioId,
+            type: planData.type,
+            collapsed: planData.collapsed,
+          })
+          .select()
+          .single();
+
+        if (!newPlan) continue;
+
+        for (const gtmData of planData.gtm_groups) {
+          const { data: newGtm } = await supabase
+            .from('gtm_groups')
+            .insert({
+              plan_id: newPlan.id,
+              name: gtmData.name,
+              type: gtmData.type,
+              collapsed: gtmData.collapsed,
+              sort_order: gtmData.sort_order,
+            })
+            .select()
+            .single();
+
+          if (!newGtm) continue;
+
+          // Insert segments
+          const segmentInserts = gtmData.segments.map((seg: any) => ({
+            gtm_group_id: newGtm.id,
+            segment_type: seg.segment_type,
+            spm: seg.spm,
+            launches: seg.launches,
+          }));
+
+          await supabase.from('segments').insert(segmentInserts);
+
+          // Insert execution plan if exists
+          if (gtmData.execution_plan) {
+            await supabase.from('gtm_execution_plans').insert({
+              gtm_group_id: newGtm.id,
+              resource_ids: gtmData.execution_plan.resource_ids,
+            });
+          }
+        }
+      }
+
+      // 5. Refresh scenarios to show updated data
+      await fetchScenarios();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to restore version');
+      throw err;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteVersion = async (versionId: string): Promise<void> => {
+    try {
+      const { error } = await supabase
+        .from('scenario_versions')
+        .delete()
+        .eq('id', versionId);
+
+      if (error) throw error;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete version');
+      throw err;
+    }
+  };
+
   return {
     scenarios,
     loading,
@@ -602,6 +841,11 @@ export function useScenarios() {
     deleteSegment,
     duplicateScenario,
     updateExecutionPlan,
+    createVersion,
+    checkDailySnapshot,
+    fetchVersions,
+    restoreVersion,
+    deleteVersion,
     refresh: fetchScenarios,
   };
 }

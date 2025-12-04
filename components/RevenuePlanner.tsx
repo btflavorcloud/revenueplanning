@@ -16,8 +16,10 @@ import {
   ChevronUp,
   RefreshCw,
   Settings,
+  History,
 } from 'lucide-react';
 import { useScenarios } from '@/lib/hooks/useScenarios';
+import VersionHistoryModal from './VersionHistoryModal';
 import { calculateMetrics, calculateFunnelMetrics, calculateMonthlyReportData, debounce } from '@/lib/utils';
 import {
   ScenarioWithData,
@@ -141,11 +143,13 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
   });
 
   const { scenarios, loading, error, saving, syncing, updateScenario, addGtmGroup, updateGtmGroup,
-    deleteGtmGroup, addSegment, updateSegment, deleteSegment, refresh } = useScenarios();
+    deleteGtmGroup, addSegment, updateSegment, deleteSegment, refresh, createVersion, checkDailySnapshot,
+    fetchVersions, restoreVersion, deleteVersion } = useScenarios();
 
   const baseScenario = scenarios.find(s => s.id === scenarioId);
   const [segmentFilter, setSegmentFilter] = useState<'all' | 'sales' | 'smb'>('all');
   const [sourceFilter, setSourceFilter] = useState<'all' | GtmType>('all');
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [localRps, setLocalRps] = useState(baseScenario?.rps || 40);
   const [localTargetShipments, setLocalTargetShipments] = useState(baseScenario?.target_shipments || 400000);
 
@@ -193,6 +197,13 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
       setLocalSettings(cloneSettings(baseScenario.settings));
     }
   }, [baseScenario]);
+
+  // Check for daily snapshot on scenario load
+  useEffect(() => {
+    if (baseScenario?.id && checkDailySnapshot) {
+      checkDailySnapshot(baseScenario.id);
+    }
+  }, [baseScenario?.id, checkDailySnapshot]);
 
   const debouncedUpdateScenario = useCallback(
     debounce((id: string, updates: any) => {
@@ -311,6 +322,40 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
       ...prev,
       [planKey]: !prev[planKey],
     }));
+  };
+
+  const handleSaveVersion = async () => {
+    if (!baseScenario) return;
+
+    const versionName = prompt('Enter version name (e.g., "Q1 Final", "Pre-board meeting"):');
+    if (!versionName) return;
+
+    try {
+      await createVersion(baseScenario.id, versionName, false);
+      alert('Version saved successfully!');
+    } catch (error) {
+      alert('Failed to save version');
+    }
+  };
+
+  const handleRestoreVersion = async (versionId: string) => {
+    if (!baseScenario) return;
+
+    try {
+      await restoreVersion(versionId, baseScenario.id);
+      setVersionHistoryOpen(false);
+      // Data will auto-refresh via realtime subscription
+    } catch (error) {
+      alert('Failed to restore version');
+    }
+  };
+
+  const handleDeleteVersion = async (versionId: string) => {
+    try {
+      await deleteVersion(versionId);
+    } catch (error) {
+      alert('Failed to delete version');
+    }
   };
 
   const updateConversionRate = (segment: SegmentType, field: 'oppToClose' | 'avgDaysToClose', value: number) => {
@@ -1214,6 +1259,22 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
             >
               <RefreshCw className="w-4 h-4" />
               Refresh
+            </button>
+            <button
+              onClick={handleSaveVersion}
+              className="flex items-center gap-2 px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-800 transition-colors text-sm"
+              title="Save current state as named version"
+            >
+              <Save className="w-4 h-4" />
+              Save Version
+            </button>
+            <button
+              onClick={() => setVersionHistoryOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition-colors text-sm"
+              title="View version history"
+            >
+              <History className="w-4 h-4" />
+              History
             </button>
             <button
               onClick={exportSummaryCSV}
@@ -2286,6 +2347,16 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
           {renderPlan(stretchPlan, 'Stretch')}
         </div>
       )}
+
+      {/* Version History Modal */}
+      <VersionHistoryModal
+        scenarioId={scenarioId}
+        isOpen={versionHistoryOpen}
+        onClose={() => setVersionHistoryOpen(false)}
+        onRestore={handleRestoreVersion}
+        onDelete={handleDeleteVersion}
+        fetchVersions={fetchVersions}
+      />
     </div>
   );
 }
