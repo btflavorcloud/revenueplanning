@@ -57,12 +57,15 @@ export interface Plan {
   created_at: string;
 }
 
+export type ConfidenceLevel = 'HI' | 'MED' | 'LO';
+
 export interface GtmGroup {
   id: string;
   plan_id: string;
   scenario_id?: string; // Keep for backwards compatibility
   name: string;
   type: 'Sales' | 'Marketing' | 'Partnerships' | 'Custom';
+  confidence: ConfidenceLevel; // Confidence level for Stretch plan weighting
   collapsed: boolean;
   sort_order: number;
   created_at: string;
@@ -147,10 +150,19 @@ export type SeasonalitySettings = Record<SegmentType, SegmentSeasonality>;
 
 export type IntegrationTimelineSettings = Record<SegmentType, number>;
 
+export type ConfidenceWeights = Record<ConfidenceLevel, number>;
+
 export interface ScenarioSettings {
   seasonality: SeasonalitySettings;
   integrationTimelineDays: IntegrationTimelineSettings;
+  confidenceWeights: ConfidenceWeights;
 }
+
+export const DEFAULT_CONFIDENCE_WEIGHTS: ConfidenceWeights = {
+  HI: 100,
+  MED: 100,
+  LO: 100,
+};
 
 export const DEFAULT_SCENARIO_SETTINGS: ScenarioSettings = {
   seasonality: {
@@ -167,6 +179,7 @@ export const DEFAULT_SCENARIO_SETTINGS: ScenarioSettings = {
     'ENT+': 0,
     Flagship: 0,
   },
+  confidenceWeights: { ...DEFAULT_CONFIDENCE_WEIGHTS },
 };
 
 export function createDefaultScenarioSettings(): ScenarioSettings {
@@ -185,6 +198,7 @@ export function createDefaultScenarioSettings(): ScenarioSettings {
       'ENT+': DEFAULT_SCENARIO_SETTINGS.integrationTimelineDays['ENT+'],
       Flagship: DEFAULT_SCENARIO_SETTINGS.integrationTimelineDays.Flagship,
     },
+    confidenceWeights: { ...DEFAULT_CONFIDENCE_WEIGHTS },
   };
 }
 
@@ -223,9 +237,16 @@ export function normalizeScenarioSettings(settings?: Partial<ScenarioSettings> |
     Flagship: settings.integrationTimelineDays?.Flagship ?? defaults.integrationTimelineDays.Flagship,
   };
 
+  const confidenceWeights: ConfidenceWeights = {
+    HI: settings.confidenceWeights?.HI ?? defaults.confidenceWeights.HI,
+    MED: settings.confidenceWeights?.MED ?? defaults.confidenceWeights.MED,
+    LO: settings.confidenceWeights?.LO ?? defaults.confidenceWeights.LO,
+  };
+
   return {
     seasonality,
     integrationTimelineDays,
+    confidenceWeights,
   };
 }
 

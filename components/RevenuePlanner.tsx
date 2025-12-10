@@ -35,6 +35,7 @@ import {
   QUARTERS,
   SegmentGroup,
   SEGMENT_GROUP_MAPPING,
+  ConfidenceLevel,
 } from '@/lib/types';
 
 interface RevenuePlannerProps {
@@ -310,6 +311,17 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
     }));
   };
 
+  const handleConfidenceWeightChange = (level: ConfidenceLevel, value: string) => {
+    const numValue = parseInt(value) || 0;
+    persistSettingsUpdate(prev => ({
+      ...prev,
+      confidenceWeights: {
+        ...prev.confidenceWeights,
+        [level]: Math.max(0, Math.min(100, numValue)),
+      },
+    }));
+  };
+
   const toggleFunnelSection = (section: FunnelSectionKey) => {
     setFunnelSectionsOpen(prev => ({
       ...prev,
@@ -393,6 +405,37 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
       localSettings.integrationTimelineDays
     );
   }, [scenario, localRps, localTargetShipments, conversionRates, localLaunches, localSPM, localSettings]);
+
+  // Calculate confidence-weighted totals for Stretch plan only
+  const confidenceWeightedTotals = useMemo(() => {
+    if (!scenario || !calculations) return null;
+
+    const stretchPlan = scenario.plans.find(p => p.type === 'Stretch');
+    if (!stretchPlan) return null;
+
+    let weightedShipments = 0;
+    let weightedRealized = 0;
+    let weightedArr = 0;
+
+    stretchPlan.gtm_groups.forEach(gtmGroup => {
+      const confidenceLevel = gtmGroup.confidence || 'MED';
+      const weight = (localSettings.confidenceWeights[confidenceLevel] || 50) / 100;
+
+      const groupShipments = calculations.gtmGroupTotals[gtmGroup.id] || 0;
+      const groupRealized = calculations.gtmGroupRevenueBreakdown[gtmGroup.id]?.realized || 0;
+      const groupArr = calculations.gtmGroupRevenueBreakdown[gtmGroup.id]?.arr || 0;
+
+      weightedShipments += groupShipments * weight;
+      weightedRealized += groupRealized * weight;
+      weightedArr += groupArr * weight;
+    });
+
+    return {
+      shipments: Math.round(weightedShipments),
+      realized: Math.round(weightedRealized),
+      arr: Math.round(weightedArr),
+    };
+  }, [scenario, calculations, localSettings.confidenceWeights]);
 
   const funnelCalculations = useMemo(() => {
     if (!scenario) return null;
@@ -822,18 +865,43 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
               {isOpen ? <ChevronDown className={`w-5 h-5 ${planColors.chevronColor}`} /> : <ChevronRight className={`w-5 h-5 ${planColors.chevronColor}`} />}
             </div>
             <div className="flex items-center gap-4 text-sm">
-              <div className="text-right">
-                <span className="text-gray-600">Shipments: </span>
-                <span className="font-bold text-gray-900">
-                  {calculations.masterGroupTotals[plan.id]?.toLocaleString() || '0'}
-                </span>
-              </div>
-              <div className="text-right">
-                <span className="text-gray-600">Revenue: </span>
-                <span className="font-bold text-gray-900">
-                  ${(calculations.masterGroupRevenueBreakdown[plan.id]?.realized || 0).toLocaleString()}
-                </span>
-              </div>
+              {planType === 'Stretch' && confidenceWeightedTotals ? (
+                <>
+                  <div className="text-right">
+                    <span className="text-gray-600">Shipments: </span>
+                    <span className="font-bold text-orange-700" title="Confidence-weighted total">
+                      {confidenceWeightedTotals.shipments.toLocaleString()}
+                    </span>
+                    <span className="text-gray-400 text-xs ml-1" title="Raw total">
+                      ({calculations.masterGroupTotals[plan.id]?.toLocaleString() || '0'})
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-gray-600">Revenue: </span>
+                    <span className="font-bold text-orange-700" title="Confidence-weighted total">
+                      ${confidenceWeightedTotals.realized.toLocaleString()}
+                    </span>
+                    <span className="text-gray-400 text-xs ml-1" title="Raw total">
+                      (${(calculations.masterGroupRevenueBreakdown[plan.id]?.realized || 0).toLocaleString()})
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-right">
+                    <span className="text-gray-600">Shipments: </span>
+                    <span className="font-bold text-gray-900">
+                      {calculations.masterGroupTotals[plan.id]?.toLocaleString() || '0'}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-gray-600">Revenue: </span>
+                    <span className="font-bold text-gray-900">
+                      ${(calculations.masterGroupRevenueBreakdown[plan.id]?.realized || 0).toLocaleString()}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </button>
@@ -884,6 +952,25 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                           <option value="Partnerships">Partnerships</option>
                           <option value="Custom">Custom</option>
                         </select>
+                        {/* Confidence dropdown - only for Stretch plan */}
+                        {planType === 'Stretch' && (
+                          <select
+                            value={gtmGroup.confidence || 'MED'}
+                            onChange={(e) => updateGtmGroup(gtmGroup.id, { confidence: e.target.value as ConfidenceLevel })}
+                            className={`text-xs font-bold px-2 py-1 rounded border ${
+                              gtmGroup.confidence === 'HI'
+                                ? 'bg-green-100 border-green-400 text-green-800'
+                                : gtmGroup.confidence === 'LO'
+                                  ? 'bg-red-100 border-red-400 text-red-800'
+                                  : 'bg-yellow-100 border-yellow-400 text-yellow-800'
+                            }`}
+                            title="Confidence level for weighted plan totals"
+                          >
+                            <option value="HI">HI</option>
+                            <option value="MED">MED</option>
+                            <option value="LO">LO</option>
+                          </select>
+                        )}
                       </div>
                       <div className="flex items-center gap-3">
                         <div className="text-right text-sm">
@@ -2181,6 +2268,64 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
               <p>
                 Merchants now ship 50% of their SPM in their first month before moving to full output.
                 Peak season multipliers apply on top of that ramp, so high-performing segments can capture seasonal upside automatically.
+              </p>
+            </div>
+
+            {/* Confidence Weights Section */}
+            <div className="mt-6">
+              <h3 className="text-lg font-bold text-gray-900 mb-2">Confidence Weights (Stretch Plan)</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Set the weighted percentage applied to Stretch plan totals based on confidence level.
+                These weights affect only the plan summary totals, not individual GTM motion values.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
+                  <thead>
+                    <tr className="bg-gray-100 text-gray-700">
+                      <th className="px-4 py-2 text-left">Confidence Level</th>
+                      <th className="px-4 py-2 text-left">Weight</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(['HI', 'MED', 'LO'] as ConfidenceLevel[]).map(level => (
+                      <tr key={level} className="border-t border-gray-200">
+                        <td className="px-4 py-3">
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                            level === 'HI'
+                              ? 'bg-green-100 text-green-800'
+                              : level === 'LO'
+                                ? 'bg-red-100 text-red-800'
+                                : 'bg-yellow-100 text-yellow-800'
+                          }`}>
+                            {level}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              value={localSettings.confidenceWeights[level]}
+                              onChange={(e) => handleConfidenceWeightChange(level, e.target.value)}
+                              className="w-24 px-3 py-2 border border-gray-300 rounded"
+                              min="0"
+                              max="100"
+                              step="1"
+                            />
+                            <span className="text-gray-600 text-sm">%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="mt-4 bg-orange-50 border border-orange-200 rounded-lg p-4 text-sm text-orange-900">
+              <p className="font-semibold mb-1">How Confidence Weights Work</p>
+              <p>
+                Each GTM motion in the Stretch plan has a confidence level (HI, MED, LO).
+                The plan totals are calculated by multiplying each motion&apos;s contribution by its confidence weight percentage.
               </p>
             </div>
           </div>

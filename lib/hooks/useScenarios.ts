@@ -210,6 +210,7 @@ export function useScenarios() {
           plan_id: planId,
           name,
           type,
+          confidence: 'MED', // Default confidence level
           collapsed: false,
           sort_order: 0,
         })
@@ -227,7 +228,7 @@ export function useScenarios() {
               plan.id === planId
                 ? {
                     ...plan,
-                    gtm_groups: [...plan.gtm_groups, { ...data, segments: [] }],
+                    gtm_groups: [...plan.gtm_groups, { ...data, confidence: data.confidence || 'MED', segments: [] }],
                   }
                 : plan
             ),
@@ -477,6 +478,7 @@ export function useScenarios() {
               plan_id: newPlan.id,
               name: gtmGroup.name,
               type: gtmGroup.type,
+              confidence: gtmGroup.confidence || 'MED',
               collapsed: gtmGroup.collapsed,
               sort_order: gtmGroup.sort_order,
             })
@@ -625,6 +627,7 @@ export function useScenarios() {
           gtm_groups: plan.gtm_groups.map((gtm: any) => ({
             name: gtm.name,
             type: gtm.type,
+            confidence: gtm.confidence || 'MED',
             collapsed: gtm.collapsed,
             sort_order: gtm.sort_order,
             segments: gtm.segments.map((seg: any) => ({
@@ -772,6 +775,7 @@ export function useScenarios() {
               plan_id: newPlan.id,
               name: gtmData.name,
               type: gtmData.type,
+              confidence: gtmData.confidence || 'MED',
               collapsed: gtmData.collapsed,
               sort_order: gtmData.sort_order,
             })
