@@ -675,6 +675,76 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
     return data;
   }, [scenario, localLaunches, localSPM, localSettings, localRps]);
 
+  // Calculate confidence-weighted quarterly data for Stretch plan
+  const confidenceWeightedQuarterData = useMemo(() => {
+    if (!scenario || !planQuarterData) return null;
+
+    const stretchPlan = scenario.plans.find(p => p.type === 'Stretch');
+    if (!stretchPlan) return null;
+
+    // Initialize weighted quarterly totals
+    const weightedQuarters: Record<string, { shipments: number; realized: number; arr: number }> = {};
+    QUARTER_KEYS.forEach(quarter => {
+      weightedQuarters[quarter] = { shipments: 0, realized: 0, arr: 0 };
+    });
+
+    // Calculate weighted values per GTM group, then aggregate by quarter
+    stretchPlan.gtm_groups.forEach(gtmGroup => {
+      const confidenceLevel = gtmGroup.confidence || 'MED';
+      const weight = (localSettings.confidenceWeights[confidenceLevel] || 100) / 100;
+
+      // For each segment in this GTM group, calculate its quarterly contribution
+      gtmGroup.segments.forEach(segment => {
+        const launches = localLaunches[segment.id] || segment.launches;
+        const spm = localSPM[segment.id] ?? segment.spm;
+
+        launches.forEach((launchCount, launchMonth) => {
+          if (!launchCount) return;
+          const baseMonthlyShipments = launchCount * spm;
+          const annualFactor = getAnnualSeasonalityFactorFromSettings(localSettings, segment.segment_type);
+          const integrationMonths = getIntegrationMonthsFromSettings(localSettings, segment.segment_type);
+          const goLiveMonth = launchMonth + integrationMonths;
+
+          if (goLiveMonth < 12) {
+            for (let month = goLiveMonth; month < 12; month++) {
+              const quarter = getQuarterFromMonthIndex(month);
+              if (!quarter) continue;
+              const rampFactor = month === goLiveMonth ? FIRST_MONTH_RAMP : 1;
+              const seasonalMultiplier = getSeasonalMultiplierFromSettings(localSettings, segment.segment_type, month);
+              const shipmentsThisMonth = baseMonthlyShipments * rampFactor * seasonalMultiplier;
+              weightedQuarters[quarter].shipments += shipmentsThisMonth * weight;
+              weightedQuarters[quarter].realized += shipmentsThisMonth * localRps * weight;
+            }
+          }
+
+          const launchQuarter = getQuarterFromMonthIndex(goLiveMonth);
+          if (launchQuarter && goLiveMonth < 12) {
+            weightedQuarters[launchQuarter].arr += baseMonthlyShipments * localRps * annualFactor * weight;
+          }
+        });
+      });
+    });
+
+    // Calculate totals
+    let totalShipments = 0;
+    let totalRealized = 0;
+    let totalArr = 0;
+    QUARTER_KEYS.forEach(quarter => {
+      totalShipments += weightedQuarters[quarter].shipments;
+      totalRealized += weightedQuarters[quarter].realized;
+      totalArr += weightedQuarters[quarter].arr;
+    });
+
+    return {
+      quarters: weightedQuarters,
+      totals: {
+        shipments: Math.round(totalShipments),
+        realized: Math.round(totalRealized),
+        arr: Math.round(totalArr),
+      },
+    };
+  }, [scenario, planQuarterData, localSettings, localLaunches, localSPM, localRps]);
+
   const exportSummaryCSV = () => {
     if (!scenario || !calculations || !monthlyReportData) return;
 
@@ -1914,26 +1984,46 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
                             </thead>
                             <tbody>
                               {QUARTER_KEYS.map(quarter => {
-                                const data = planQuarterData[stretchPlan.id][quarter];
+                                const rawData = planQuarterData[stretchPlan.id][quarter];
+                                const weightedData = confidenceWeightedQuarterData?.quarters[quarter];
+                                const showWeighted = weightedData && Math.round(weightedData.shipments) !== Math.round(rawData.shipments);
                                 return (
                                   <tr key={`stretch-${quarter}`} className="border-t border-orange-100">
                                     <td className="px-2 py-1 font-semibold text-orange-800">{quarter}</td>
-                                    <td className="px-2 py-1 text-right text-orange-900">{Math.round(data.shipments).toLocaleString()}</td>
-                                    <td className="px-2 py-1 text-right text-orange-900">${Math.round(data.realized).toLocaleString()}</td>
-                                    <td className="px-2 py-1 text-right text-orange-900">${Math.round(data.arr).toLocaleString()}</td>
+                                    <td className="px-2 py-1 text-right text-orange-900">
+                                      {showWeighted ? Math.round(weightedData.shipments).toLocaleString() : Math.round(rawData.shipments).toLocaleString()}
+                                      {showWeighted && <span className="text-orange-400 text-[10px] ml-1">({Math.round(rawData.shipments).toLocaleString()})</span>}
+                                    </td>
+                                    <td className="px-2 py-1 text-right text-orange-900">
+                                      ${showWeighted ? Math.round(weightedData.realized).toLocaleString() : Math.round(rawData.realized).toLocaleString()}
+                                      {showWeighted && <span className="text-orange-400 text-[10px] ml-1">(${Math.round(rawData.realized).toLocaleString()})</span>}
+                                    </td>
+                                    <td className="px-2 py-1 text-right text-orange-900">
+                                      ${showWeighted ? Math.round(weightedData.arr).toLocaleString() : Math.round(rawData.arr).toLocaleString()}
+                                      {showWeighted && <span className="text-orange-400 text-[10px] ml-1">(${Math.round(rawData.arr).toLocaleString()})</span>}
+                                    </td>
                                   </tr>
                                 );
                               })}
                               <tr className="bg-orange-100 font-semibold text-orange-900 border-t border-orange-200">
                                 <td className="px-2 py-1">Total</td>
                                 <td className="px-2 py-1 text-right">
-                                  {calculations.masterGroupTotals[stretchPlan?.id || '']?.toLocaleString() || '0'}
+                                  {confidenceWeightedTotals?.shipments.toLocaleString() || calculations.masterGroupTotals[stretchPlan?.id || '']?.toLocaleString() || '0'}
+                                  {confidenceWeightedTotals && confidenceWeightedTotals.shipments !== (calculations.masterGroupTotals[stretchPlan?.id || ''] || 0) && (
+                                    <span className="text-orange-400 text-[10px] ml-1">({calculations.masterGroupTotals[stretchPlan?.id || '']?.toLocaleString() || '0'})</span>
+                                  )}
                                 </td>
                                 <td className="px-2 py-1 text-right">
-                                  ${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.realized || 0).toLocaleString()}
+                                  ${confidenceWeightedTotals?.realized.toLocaleString() || (calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.realized || 0).toLocaleString()}
+                                  {confidenceWeightedTotals && confidenceWeightedTotals.realized !== (calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.realized || 0) && (
+                                    <span className="text-orange-400 text-[10px] ml-1">(${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.realized || 0).toLocaleString()})</span>
+                                  )}
                                 </td>
                                 <td className="px-2 py-1 text-right">
-                                  ${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.arr || 0).toLocaleString()}
+                                  ${confidenceWeightedTotals?.arr.toLocaleString() || (calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.arr || 0).toLocaleString()}
+                                  {confidenceWeightedTotals && confidenceWeightedTotals.arr !== (calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.arr || 0) && (
+                                    <span className="text-orange-400 text-[10px] ml-1">(${(calculations.masterGroupRevenueBreakdown[stretchPlan?.id || '']?.arr || 0).toLocaleString()})</span>
+                                  )}
                                 </td>
                               </tr>
                             </tbody>
