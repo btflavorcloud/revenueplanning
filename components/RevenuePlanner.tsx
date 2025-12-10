@@ -437,6 +437,44 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
     };
   }, [scenario, calculations, localSettings.confidenceWeights]);
 
+  // Calculate overall confidence-adjusted totals (Baseline full + Stretch weighted)
+  const confidenceAdjustedOverallTotals = useMemo(() => {
+    if (!scenario || !calculations || !confidenceWeightedTotals) return null;
+
+    const baselinePlan = scenario.plans.find(p => p.type === 'Baseline');
+    const stretchPlan = scenario.plans.find(p => p.type === 'Stretch');
+
+    // Get Baseline totals (unweighted)
+    const baselineShipments = baselinePlan ? (calculations.masterGroupTotals[baselinePlan.id] || 0) : 0;
+    const baselineRealized = baselinePlan ? (calculations.masterGroupRevenueBreakdown[baselinePlan.id]?.realized || 0) : 0;
+    const baselineArr = baselinePlan ? (calculations.masterGroupRevenueBreakdown[baselinePlan.id]?.arr || 0) : 0;
+
+    // Get raw Stretch totals for comparison
+    const rawStretchShipments = stretchPlan ? (calculations.masterGroupTotals[stretchPlan.id] || 0) : 0;
+    const rawStretchRealized = stretchPlan ? (calculations.masterGroupRevenueBreakdown[stretchPlan.id]?.realized || 0) : 0;
+    const rawStretchArr = stretchPlan ? (calculations.masterGroupRevenueBreakdown[stretchPlan.id]?.arr || 0) : 0;
+
+    // Combined totals: Baseline (full) + Stretch (weighted)
+    const totalShipments = baselineShipments + confidenceWeightedTotals.shipments;
+    const totalRealized = baselineRealized + confidenceWeightedTotals.realized;
+    const totalArr = baselineArr + confidenceWeightedTotals.arr;
+
+    // Raw totals for comparison
+    const rawTotalShipments = baselineShipments + rawStretchShipments;
+    const rawTotalRealized = baselineRealized + rawStretchRealized;
+    const rawTotalArr = baselineArr + rawStretchArr;
+
+    return {
+      shipments: Math.round(totalShipments),
+      realized: Math.round(totalRealized),
+      arr: Math.round(totalArr),
+      rawShipments: Math.round(rawTotalShipments),
+      rawRealized: Math.round(rawTotalRealized),
+      rawArr: Math.round(rawTotalArr),
+      percentageToGoal: (totalShipments / localTargetShipments) * 100,
+    };
+  }, [scenario, calculations, confidenceWeightedTotals, localTargetShipments]);
+
   const funnelCalculations = useMemo(() => {
     if (!scenario) return null;
 
@@ -1745,23 +1783,38 @@ export default function RevenuePlanner({ scenarioId }: RevenuePlannerProps) {
           <div className="bg-gray-50 rounded-lg p-3 border-4 border-blue-700">
             <p className="text-xs font-semibold text-gray-600 mb-1">Total Annual Shipments</p>
             <p className="text-2xl font-bold text-gray-900">
-              {calculations.totalShipments.toLocaleString()}
+              {confidenceAdjustedOverallTotals?.shipments.toLocaleString() || calculations.totalShipments.toLocaleString()}
+              {confidenceAdjustedOverallTotals && confidenceAdjustedOverallTotals.shipments !== confidenceAdjustedOverallTotals.rawShipments && (
+                <span className="text-sm font-normal text-gray-400 ml-1">
+                  ({confidenceAdjustedOverallTotals.rawShipments.toLocaleString()})
+                </span>
+              )}
             </p>
             <p className="text-xs text-gray-600 mt-1">
-              {calculations.percentageToGoal.toFixed(1)}% of {localTargetShipments.toLocaleString()} goal
+              {(confidenceAdjustedOverallTotals?.percentageToGoal || calculations.percentageToGoal).toFixed(1)}% of {localTargetShipments.toLocaleString()} goal
             </p>
           </div>
           <div className="bg-gray-50 rounded-lg p-3 border-4 border-blue-700">
             <p className="text-xs font-semibold text-gray-600 mb-1">Realized Revenue (Year 1)</p>
             <p className="text-2xl font-bold text-gray-900">
-              ${calculations.realizedRevenue.toLocaleString()}
+              ${(confidenceAdjustedOverallTotals?.realized || calculations.realizedRevenue).toLocaleString()}
+              {confidenceAdjustedOverallTotals && confidenceAdjustedOverallTotals.realized !== confidenceAdjustedOverallTotals.rawRealized && (
+                <span className="text-sm font-normal text-gray-400 ml-1">
+                  (${confidenceAdjustedOverallTotals.rawRealized.toLocaleString()})
+                </span>
+              )}
             </p>
             <p className="text-xs text-gray-500 mt-1">Actual revenue this year</p>
           </div>
           <div className="bg-gray-50 rounded-lg p-3 border-4 border-blue-700">
             <p className="text-xs font-semibold text-gray-600 mb-1">Annualized Run Rate (ARR)</p>
             <p className="text-2xl font-bold text-gray-900">
-              ${calculations.annualizedRunRate.toLocaleString()}
+              ${(confidenceAdjustedOverallTotals?.arr || calculations.annualizedRunRate).toLocaleString()}
+              {confidenceAdjustedOverallTotals && confidenceAdjustedOverallTotals.arr !== confidenceAdjustedOverallTotals.rawArr && (
+                <span className="text-sm font-normal text-gray-400 ml-1">
+                  (${confidenceAdjustedOverallTotals.rawArr.toLocaleString()})
+                </span>
+              )}
             </p>
             <p className="text-xs text-gray-500 mt-1">Full-year potential</p>
           </div>
